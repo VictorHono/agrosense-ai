@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgroCamer - Hors Ligne</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Nunito', system-ui, sans-serif;
+      background: linear-gradient(135deg, #1a5f2a 0%, #0d3d18 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      color: white;
+    }
+    .container {
+      text-align: center;
+      max-width: 400px;
+    }
+    .icon {
+      width: 120px;
+      height: 120px;
+      margin: 0 auto 2rem;
+      background: rgba(255,255,255,0.1);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .icon svg {
+      width: 60px;
+      height: 60px;
+      opacity: 0.9;
+    }
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+    }
+    p {
+      font-size: 1rem;
+      opacity: 0.9;
+      line-height: 1.6;
+      margin-bottom: 2rem;
+    }
+    .retry-btn {
+      background: #f5a623;
+      color: #1a1a1a;
+      border: none;
+      padding: 1rem 2rem;
+      font-size: 1rem;
+      font-weight: 600;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .retry-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(245, 166, 35, 0.3);
+    }
+    .tips {
+      margin-top: 3rem;
+      padding: 1.5rem;
+      background: rgba(255,255,255,0.1);
+      border-radius: 16px;
+      text-align: left;
+    }
+    .tips h3 {
+      font-size: 0.875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.75rem;
+      opacity: 0.8;
+    }
+    .tips ul {
+      list-style: none;
+      font-size: 0.875rem;
+      opacity: 0.9;
+    }
+    .tips li {
+      padding: 0.5rem 0;
+      padding-left: 1.5rem;
+      position: relative;
+    }
+    .tips li::before {
+      content: "✓";
+      position: absolute;
+      left: 0;
+      color: #f5a623;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0 1 19 12.55M5 12.55a10.94 10.94 0 0 1 5.17-2.39M10.71 5.05A16 16 0 0 1 22.58 9M1.42 9a15.91 15.91 0 0 1 4.7-2.88M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/>
+      </svg>
+    </div>
+    <h1>Vous êtes hors ligne</h1>
+    <p>
+      Pas de connexion internet disponible. Vérifiez votre réseau et réessayez.
+    </p>
+    <button class="retry-btn" onclick="window.location.reload()">
+      Réessayer
+    </button>
+    <div class="tips">
+      <h3>Conseils</h3>
+      <ul>
+        <li>Vérifiez votre connexion WiFi ou données mobiles</li>
+        <li>Éloignez-vous des obstacles pour meilleur signal</li>
+        <li>Vos analyses sauvegardées seront synchronisées automatiquement</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>
