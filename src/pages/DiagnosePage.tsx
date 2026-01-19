@@ -4,79 +4,129 @@ import { PageContainer } from '@/components/layout/PageContainer';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { cn } from '@/lib/utils';
-import { Link } from 'react-router-dom';
 import { CROP_LABELS, type Crop } from '@/types';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 type AnalysisStep = 'capture' | 'analyzing' | 'result';
 
-interface MockResult {
-  disease: string;
-  localName: string;
-  severity: 'low' | 'medium' | 'high' | 'critical';
+interface AnalysisResult {
+  disease_name: string;
+  local_name?: string;
   confidence: number;
+  severity: 'low' | 'medium' | 'high' | 'critical';
   description: string;
   causes: string[];
-  treatments: { type: 'biological' | 'chemical'; name: string; dosage: string }[];
+  symptoms: string[];
+  biological_treatments: string[];
+  chemical_treatments: string[];
   prevention: string[];
+  affected_crop: string;
 }
 
 export default function DiagnosePage() {
   const { t, language } = useLanguage();
   const [step, setStep] = useState<AnalysisStep>('capture');
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [selectedCrop, setSelectedCrop] = useState<Crop | null>(null);
-  const [result, setResult] = useState<MockResult | null>(null);
+  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [isReading, setIsReading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      // Create preview URL
       const url = URL.createObjectURL(file);
       setImageUrl(url);
+
+      // Convert to base64 for API
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = reader.result as string;
+        setImageBase64(base64);
+      };
+      reader.readAsDataURL(file);
     }
   }, []);
 
   const handleAnalyze = async () => {
-    if (!imageUrl || !selectedCrop) return;
+    if (!imageBase64 || !selectedCrop) return;
     
     setStep('analyzing');
     
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    
-    // Mock result
-    setResult({
-      disease: 'Cercosporiose',
-      localName: 'Maladie des taches foliaires',
-      severity: 'medium',
-      confidence: 87,
-      description: 'La cercosporiose est une maladie fongique qui provoque des taches brunes sur les feuilles. Elle est courante pendant la saison des pluies.',
-      causes: [
-        'Humidité excessive',
-        'Mauvaise circulation d\'air',
-        'Sol contaminé'
-      ],
-      treatments: [
-        { type: 'biological', name: 'Extrait de neem', dosage: '50ml/L d\'eau, pulvériser tous les 7 jours' },
-        { type: 'chemical', name: 'Fongicide Mancozèbe', dosage: '2.5g/L d\'eau, appliquer toutes les 2 semaines' }
-      ],
-      prevention: [
-        'Espacer les plants pour favoriser l\'aération',
-        'Éviter l\'arrosage excessif',
-        'Retirer les feuilles infectées',
-        'Rotation des cultures'
-      ]
-    });
-    
-    setStep('result');
+    try {
+      const { data, error } = await supabase.functions.invoke('analyze-plant', {
+        body: {
+          image: imageBase64,
+          crop_hint: CROP_LABELS[selectedCrop][language],
+          language: language,
+        },
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      if (data.success && data.analysis) {
+        setResult(data.analysis);
+        setStep('result');
+      } else {
+        throw new Error('Résultat inattendu');
+      }
+    } catch (error) {
+      console.error('Analysis error:', error);
+      toast.error(
+        error instanceof Error 
+          ? error.message 
+          : 'Erreur lors de l\'analyse. Veuillez réessayer.'
+      );
+      setStep('capture');
+    }
   };
 
   const resetAnalysis = () => {
     setStep('capture');
     setImageUrl(null);
+    setImageBase64(null);
     setSelectedCrop(null);
     setResult(null);
+  };
+
+  const speakResult = () => {
+    if (!result || isReading) return;
+
+    const text = language === 'fr'
+      ? `Maladie détectée: ${result.disease_name}. ${result.local_name ? `Aussi appelée ${result.local_name}.` : ''} 
+         Niveau de gravité: ${result.severity === 'low' ? 'faible' : result.severity === 'medium' ? 'moyen' : result.severity === 'high' ? 'élevé' : 'critique'}. 
+         ${result.description}. 
+         Traitements recommandés: ${result.biological_treatments.join('. ')}. 
+         ${result.chemical_treatments.length > 0 ? 'Traitements chimiques: ' + result.chemical_treatments.join('. ') : ''}`
+      : `Disease detected: ${result.disease_name}. ${result.local_name ? `Also called ${result.local_name}.` : ''} 
+         Severity level: ${result.severity}. 
+         ${result.description}. 
+         Recommended treatments: ${result.biological_treatments.join('. ')}. 
+         ${result.chemical_treatments.length > 0 ? 'Chemical treatments: ' + result.chemical_treatments.join('. ') : ''}`;
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = language === 'fr' ? 'fr-FR' : 'en-US';
+    utterance.rate = 0.9;
+    
+    utterance.onstart = () => setIsReading(true);
+    utterance.onend = () => setIsReading(false);
+    utterance.onerror = () => {
+      setIsReading(false);
+      toast.error('Impossible de lire le texte');
+    };
+
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
   };
 
   const severityColors = {
@@ -119,7 +169,10 @@ export default function DiagnosePage() {
                   variant="secondary"
                   size="sm"
                   className="absolute top-3 right-3"
-                  onClick={() => setImageUrl(null)}
+                  onClick={() => {
+                    setImageUrl(null);
+                    setImageBase64(null);
+                  }}
                 >
                   Changer
                 </Button>
@@ -268,8 +321,13 @@ export default function DiagnosePage() {
                   <AlertTriangle className="w-3 h-3" />
                   {t(`severity.${result.severity}`)}
                 </div>
-                <h2 className="text-lg font-bold text-foreground">{result.disease}</h2>
-                <p className="text-sm text-muted-foreground">{result.localName}</p>
+                <h2 className="text-lg font-bold text-foreground">{result.disease_name}</h2>
+                {result.local_name && (
+                  <p className="text-sm text-muted-foreground">{result.local_name}</p>
+                )}
+                <p className="text-xs text-muted-foreground mt-1">
+                  Culture: {result.affected_crop}
+                </p>
                 <div className="mt-2 flex items-center gap-2">
                   <div className="h-1.5 flex-1 bg-muted rounded-full overflow-hidden">
                     <div 
@@ -291,10 +349,34 @@ export default function DiagnosePage() {
           </div>
 
           {/* Listen Button */}
-          <Button variant="harvest" className="w-full" size="lg">
-            <Volume2 className="w-5 h-5 mr-2" />
-            {t('disease.listen')}
+          <Button 
+            variant="harvest" 
+            className="w-full" 
+            size="lg"
+            onClick={speakResult}
+            disabled={isReading}
+          >
+            <Volume2 className={cn("w-5 h-5 mr-2", isReading && "animate-pulse")} />
+            {isReading ? 'Lecture en cours...' : t('disease.listen')}
           </Button>
+
+          {/* Symptoms */}
+          {result.symptoms.length > 0 && (
+            <div className="p-4 rounded-xl bg-card border border-border">
+              <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                <Leaf className="w-4 h-4 text-warning" />
+                Symptômes
+              </h3>
+              <ul className="space-y-2">
+                {result.symptoms.map((symptom, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                    <span className="w-1.5 h-1.5 rounded-full bg-warning shrink-0 mt-1.5" />
+                    {symptom}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Causes */}
           <div className="p-4 rounded-xl bg-card border border-border">
@@ -319,27 +401,37 @@ export default function DiagnosePage() {
               {t('disease.treatments')}
             </h3>
             <div className="space-y-3">
-              {result.treatments.map((treatment, i) => (
-                <div key={i} className={cn(
-                  "p-3 rounded-lg border",
-                  treatment.type === 'biological' 
-                    ? "bg-success/5 border-success/20" 
-                    : "bg-info/5 border-info/20"
-                )}>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={cn(
-                      "text-[10px] font-medium uppercase px-1.5 py-0.5 rounded",
-                      treatment.type === 'biological' 
-                        ? "bg-success/10 text-success" 
-                        : "bg-info/10 text-info"
-                    )}>
-                      {treatment.type === 'biological' ? 'Biologique' : 'Chimique'}
+              {/* Biological treatments */}
+              {result.biological_treatments.length > 0 && (
+                <div className="p-3 rounded-lg border bg-success/5 border-success/20">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-[10px] font-medium uppercase px-1.5 py-0.5 rounded bg-success/10 text-success">
+                      Biologique
                     </span>
                   </div>
-                  <p className="font-medium text-sm text-foreground">{treatment.name}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{treatment.dosage}</p>
+                  <ul className="space-y-1">
+                    {result.biological_treatments.map((treatment, i) => (
+                      <li key={i} className="text-sm text-foreground">{treatment}</li>
+                    ))}
+                  </ul>
                 </div>
-              ))}
+              )}
+
+              {/* Chemical treatments */}
+              {result.chemical_treatments.length > 0 && (
+                <div className="p-3 rounded-lg border bg-info/5 border-info/20">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-[10px] font-medium uppercase px-1.5 py-0.5 rounded bg-info/10 text-info">
+                      Chimique
+                    </span>
+                  </div>
+                  <ul className="space-y-1">
+                    {result.chemical_treatments.map((treatment, i) => (
+                      <li key={i} className="text-sm text-foreground">{treatment}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </div>
 
