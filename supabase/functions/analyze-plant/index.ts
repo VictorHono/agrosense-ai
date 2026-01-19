@@ -19,6 +19,257 @@ interface AnalysisResult {
   affected_crop: string;
 }
 
+interface AIProvider {
+  name: string;
+  endpoint: string;
+  apiKey: string;
+  model: string;
+  isLovable: boolean;
+}
+
+// Get all available AI providers in fallback order
+function getAIProviders(): AIProvider[] {
+  const providers: AIProvider[] = [];
+
+  // Primary: Lovable AI Gateway
+  const lovableKey = Deno.env.get("LOVABLE_API_KEY");
+  if (lovableKey) {
+    providers.push({
+      name: "Lovable AI Gateway",
+      endpoint: "https://ai.gateway.lovable.dev/v1/chat/completions",
+      apiKey: lovableKey,
+      model: "google/gemini-2.5-pro",
+      isLovable: true,
+    });
+  }
+
+  // Fallback 1-5: Gemini API Keys
+  const geminiKeys = [
+    { key: Deno.env.get("GEMINI_API_KEY_1"), name: "Gemini API 1" },
+    { key: Deno.env.get("GEMINI_API_KEY_2"), name: "Gemini API 2" },
+    { key: Deno.env.get("GEMINI_API_KEY_3"), name: "Gemini API 3" },
+    { key: Deno.env.get("GEMINI_API_KEY_4"), name: "Gemini API 4" },
+    { key: Deno.env.get("GEMINI_API_KEY_5"), name: "Gemini API 5" },
+  ];
+
+  for (const { key, name } of geminiKeys) {
+    if (key) {
+      providers.push({
+        name,
+        endpoint: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
+        apiKey: key,
+        model: "gemini-2.0-flash",
+        isLovable: false,
+      });
+    }
+  }
+
+  return providers;
+}
+
+// Build request body for Lovable AI Gateway
+function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData: string) {
+  return {
+    model: "google/gemini-2.5-pro",
+    messages: [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: userPrompt },
+          {
+            type: "image_url",
+            image_url: {
+              url: imageData.startsWith("data:") ? imageData : `data:image/jpeg;base64,${imageData}`,
+            },
+          },
+        ],
+      },
+    ],
+    tools: [
+      {
+        type: "function",
+        function: {
+          name: "analyze_plant_disease",
+          description: "Analyse une image de plante et retourne les informations sur la maladie détectée",
+          parameters: {
+            type: "object",
+            properties: {
+              disease_name: { type: "string", description: "Nom scientifique ou commun de la maladie/ravageur" },
+              local_name: { type: "string", description: "Nom local camerounais si disponible" },
+              confidence: { type: "number", description: "Niveau de confiance de la détection (0-100)" },
+              severity: { type: "string", enum: ["low", "medium", "high", "critical"], description: "Niveau de gravité" },
+              description: { type: "string", description: "Explication simple de la maladie" },
+              causes: { type: "array", items: { type: "string" }, description: "Causes probables" },
+              symptoms: { type: "array", items: { type: "string" }, description: "Symptômes visibles" },
+              biological_treatments: { type: "array", items: { type: "string" }, description: "Traitements biologiques disponibles au Cameroun" },
+              chemical_treatments: { type: "array", items: { type: "string" }, description: "Traitements chimiques avec noms commerciaux locaux et dosages" },
+              prevention: { type: "array", items: { type: "string" }, description: "Mesures préventives" },
+              affected_crop: { type: "string", description: "Culture concernée" },
+            },
+            required: ["disease_name", "confidence", "severity", "description", "causes", "symptoms", "biological_treatments", "chemical_treatments", "prevention", "affected_crop"],
+            additionalProperties: false,
+          },
+        },
+      },
+    ],
+    tool_choice: { type: "function", function: { name: "analyze_plant_disease" } },
+  };
+}
+
+// Build request body for direct Gemini API
+function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData: string) {
+  const base64Data = imageData.startsWith("data:") 
+    ? imageData.split(",")[1] 
+    : imageData;
+
+  const jsonSchema = `{
+  "disease_name": "string - Nom scientifique ou commun de la maladie/ravageur",
+  "local_name": "string - Nom local camerounais si disponible",
+  "confidence": "number - Niveau de confiance de la détection (0-100)",
+  "severity": "string - low | medium | high | critical",
+  "description": "string - Explication simple de la maladie",
+  "causes": ["array of strings - Causes probables"],
+  "symptoms": ["array of strings - Symptômes visibles"],
+  "biological_treatments": ["array of strings - Traitements biologiques disponibles au Cameroun"],
+  "chemical_treatments": ["array of strings - Traitements chimiques avec noms commerciaux locaux et dosages"],
+  "prevention": ["array of strings - Mesures préventives"],
+  "affected_crop": "string - Culture concernée"
+}`;
+
+  return {
+    contents: [
+      {
+        parts: [
+          { text: `${systemPrompt}\n\n${userPrompt}\n\nRéponds UNIQUEMENT avec un objet JSON valide suivant ce schéma:\n${jsonSchema}` },
+          {
+            inline_data: {
+              mime_type: "image/jpeg",
+              data: base64Data,
+            },
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.4,
+      topK: 32,
+      topP: 1,
+      maxOutputTokens: 4096,
+    },
+  };
+}
+
+// Parse response from Lovable AI Gateway
+function parseLovableResponse(data: any): AnalysisResult | null {
+  const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+  if (!toolCall?.function?.arguments) {
+    return null;
+  }
+  return JSON.parse(toolCall.function.arguments);
+}
+
+// Parse response from direct Gemini API
+function parseGeminiResponse(data: any): AnalysisResult | null {
+  const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!textContent) {
+    return null;
+  }
+
+  // Extract JSON from the response
+  const jsonMatch = textContent.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    return null;
+  }
+
+  return JSON.parse(jsonMatch[0]);
+}
+
+// Check if error is recoverable (should try next provider)
+function isRecoverableError(status: number): boolean {
+  return status === 429 || status === 402 || status === 503 || status === 500 || status === 529;
+}
+
+// Make API call with a specific provider
+async function callProvider(
+  provider: AIProvider,
+  systemPrompt: string,
+  userPrompt: string,
+  imageData: string
+): Promise<{ success: boolean; result?: AnalysisResult; error?: string; shouldRetry: boolean }> {
+  console.log(`Trying provider: ${provider.name}`);
+
+  try {
+    let response: Response;
+    let result: AnalysisResult | null;
+
+    if (provider.isLovable) {
+      response = await fetch(provider.endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${provider.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(buildLovableRequest(systemPrompt, userPrompt, imageData)),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`${provider.name} error:`, response.status, errorText);
+        return {
+          success: false,
+          error: `${provider.name}: ${response.status}`,
+          shouldRetry: isRecoverableError(response.status),
+        };
+      }
+
+      const data = await response.json();
+      result = parseLovableResponse(data);
+    } else {
+      response = await fetch(provider.endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(buildGeminiRequest(systemPrompt, userPrompt, imageData)),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`${provider.name} error:`, response.status, errorText);
+        return {
+          success: false,
+          error: `${provider.name}: ${response.status}`,
+          shouldRetry: isRecoverableError(response.status),
+        };
+      }
+
+      const data = await response.json();
+      result = parseGeminiResponse(data);
+    }
+
+    if (!result) {
+      console.error(`${provider.name}: Failed to parse response`);
+      return {
+        success: false,
+        error: `${provider.name}: Parse error`,
+        shouldRetry: true,
+      };
+    }
+
+    console.log(`${provider.name} succeeded:`, result.disease_name);
+    return { success: true, result, shouldRetry: false };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`${provider.name} exception:`, error);
+    return {
+      success: false,
+      error: `${provider.name}: ${errorMessage}`,
+      shouldRetry: true,
+    };
+  }
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -36,16 +287,16 @@ serve(async (req) => {
       );
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      console.error("LOVABLE_API_KEY not configured");
+    const providers = getAIProviders();
+    if (providers.length === 0) {
+      console.error("No AI providers configured");
       return new Response(
-        JSON.stringify({ error: "Configuration API manquante" }),
+        JSON.stringify({ error: "Aucun fournisseur IA configuré" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    console.log("Analyzing plant image...");
+    console.log(`Available providers: ${providers.map(p => p.name).join(", ")}`);
     console.log("Crop hint:", crop_hint);
     console.log("Language:", language);
 
@@ -69,158 +320,49 @@ Cultures camerounaises courantes: cacao, café, maïs, manioc, banane plantain, 
 
 Réponds en ${language === "fr" ? "français" : "anglais"} avec les informations structurées sur la maladie détectée.`;
 
-    // Call Lovable AI Gateway with vision capabilities
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
-        messages: [
-          { role: "system", content: systemPrompt },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: userPrompt },
-              {
-                type: "image_url",
-                image_url: {
-                  url: image.startsWith("data:") ? image : `data:image/jpeg;base64,${image}`,
-                },
-              },
-            ],
-          },
-        ],
-        tools: [
-          {
-            type: "function",
-            function: {
-              name: "analyze_plant_disease",
-              description: "Analyse une image de plante et retourne les informations sur la maladie détectée",
-              parameters: {
-                type: "object",
-                properties: {
-                  disease_name: {
-                    type: "string",
-                    description: "Nom scientifique ou commun de la maladie/ravageur",
-                  },
-                  local_name: {
-                    type: "string",
-                    description: "Nom local camerounais si disponible",
-                  },
-                  confidence: {
-                    type: "number",
-                    description: "Niveau de confiance de la détection (0-100)",
-                  },
-                  severity: {
-                    type: "string",
-                    enum: ["low", "medium", "high", "critical"],
-                    description: "Niveau de gravité",
-                  },
-                  description: {
-                    type: "string",
-                    description: "Explication simple de la maladie",
-                  },
-                  causes: {
-                    type: "array",
-                    items: { type: "string" },
-                    description: "Causes probables",
-                  },
-                  symptoms: {
-                    type: "array",
-                    items: { type: "string" },
-                    description: "Symptômes visibles",
-                  },
-                  biological_treatments: {
-                    type: "array",
-                    items: { type: "string" },
-                    description: "Traitements biologiques disponibles au Cameroun",
-                  },
-                  chemical_treatments: {
-                    type: "array",
-                    items: { type: "string" },
-                    description: "Traitements chimiques avec noms commerciaux locaux et dosages",
-                  },
-                  prevention: {
-                    type: "array",
-                    items: { type: "string" },
-                    description: "Mesures préventives",
-                  },
-                  affected_crop: {
-                    type: "string",
-                    description: "Culture concernée",
-                  },
-                },
-                required: [
-                  "disease_name",
-                  "confidence",
-                  "severity",
-                  "description",
-                  "causes",
-                  "symptoms",
-                  "biological_treatments",
-                  "chemical_treatments",
-                  "prevention",
-                  "affected_crop",
-                ],
-                additionalProperties: false,
-              },
-            },
-          },
-        ],
-        tool_choice: { type: "function", function: { name: "analyze_plant_disease" } },
-      }),
-    });
+    // Try each provider in order until one succeeds
+    let lastError = "";
+    let usedProvider = "";
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("AI Gateway error:", response.status, errorText);
+    for (const provider of providers) {
+      const { success, result, error, shouldRetry } = await callProvider(
+        provider,
+        systemPrompt,
+        userPrompt,
+        image
+      );
 
-      if (response.status === 429) {
+      if (success && result) {
+        usedProvider = provider.name;
         return new Response(
-          JSON.stringify({ error: "Trop de requêtes. Veuillez réessayer dans quelques instants." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          JSON.stringify({
+            success: true,
+            analysis: result,
+            analyzed_at: new Date().toISOString(),
+            provider: usedProvider,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "Crédits insuffisants. Veuillez contacter l'administrateur." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+      lastError = error || "Unknown error";
+      
+      if (!shouldRetry) {
+        console.log(`${provider.name}: Non-recoverable error, stopping fallback chain`);
+        break;
       }
 
-      return new Response(
-        JSON.stringify({ error: "Erreur lors de l'analyse. Veuillez réessayer." }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      console.log(`${provider.name} failed, trying next provider...`);
     }
 
-    const data = await response.json();
-    console.log("AI response received");
-
-    // Extract the tool call result
-    const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
-    if (!toolCall?.function?.arguments) {
-      console.error("No tool call in response:", JSON.stringify(data));
-      return new Response(
-        JSON.stringify({ error: "Impossible d'analyser l'image. Veuillez prendre une photo plus claire." }),
-        { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const analysisResult: AnalysisResult = JSON.parse(toolCall.function.arguments);
-    console.log("Analysis result:", analysisResult.disease_name, "Severity:", analysisResult.severity);
-
+    // All providers failed
+    console.error("All AI providers failed. Last error:", lastError);
     return new Response(
-      JSON.stringify({
-        success: true,
-        analysis: analysisResult,
-        analyzed_at: new Date().toISOString(),
+      JSON.stringify({ 
+        error: "Tous les services IA sont temporairement indisponibles. Veuillez réessayer plus tard.",
+        details: lastError
       }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
     console.error("Error in analyze-plant function:", error);
