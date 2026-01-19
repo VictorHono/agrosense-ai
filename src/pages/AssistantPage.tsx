@@ -99,8 +99,7 @@ export default function AssistantPage() {
   return (
     <PageContainer 
       title={t('assistant.title')} 
-      className="flex flex-col h-[calc(100vh-3.5rem)] p-0"
-      fullHeight
+      className="flex flex-col p-0 overflow-hidden"
     >
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide">

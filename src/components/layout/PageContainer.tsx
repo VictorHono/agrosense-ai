@@ -21,13 +21,13 @@ export function PageContainer({
   fullHeight = false
 }: PageContainerProps) {
   return (
-    <div className="flex flex-col min-h-screen bg-background pattern-african">
+    <div className="flex flex-col min-h-screen h-[100dvh] bg-background pattern-african overflow-hidden">
       {showHeader && <Header title={title} />}
       <main 
         className={cn(
-          "flex-1 max-w-lg mx-auto w-full overflow-y-auto",
-          showNav && "pb-20",
-          fullHeight ? "min-h-[calc(100vh-3.5rem)]" : "p-4",
+          "flex-1 max-w-lg mx-auto w-full overflow-y-auto overscroll-y-contain",
+          showNav && "pb-[calc(5rem+env(safe-area-inset-bottom))]",
+          fullHeight ? "min-h-[calc(100dvh-3.5rem)]" : "p-4",
           className
         )}
       >
