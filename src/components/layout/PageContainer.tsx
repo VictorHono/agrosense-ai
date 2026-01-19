@@ -20,16 +20,22 @@ export function PageContainer({
   className,
   fullHeight = false
 }: PageContainerProps) {
+  // Calculate the height offset based on header and nav visibility
+  const headerHeight = showHeader ? '3.5rem' : '0px';
+  const navHeight = showNav ? 'calc(4rem + env(safe-area-inset-bottom))' : '0px';
+
   return (
-    <div className="flex flex-col min-h-screen h-[100dvh] bg-background pattern-african overflow-hidden">
+    <div className="flex flex-col h-[100dvh] bg-background pattern-african overflow-hidden">
       {showHeader && <Header title={title} />}
       <main 
         className={cn(
           "flex-1 max-w-lg mx-auto w-full overflow-y-auto overscroll-y-contain",
-          showNav && "pb-[calc(5rem+env(safe-area-inset-bottom))]",
-          fullHeight ? "min-h-[calc(100dvh-3.5rem)]" : "p-4",
+          !fullHeight && "p-4",
           className
         )}
+        style={{
+          maxHeight: `calc(100dvh - ${headerHeight} - ${navHeight})`,
+        }}
       >
         {children}
       </main>
