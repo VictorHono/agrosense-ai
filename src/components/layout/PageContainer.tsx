@@ -21,11 +21,11 @@ export function PageContainer({
   fullHeight = false
 }: PageContainerProps) {
   return (
-    <div className="min-h-screen bg-background pattern-african">
+    <div className="flex flex-col min-h-screen bg-background pattern-african">
       {showHeader && <Header title={title} />}
       <main 
         className={cn(
-          "max-w-lg mx-auto",
+          "flex-1 max-w-lg mx-auto w-full overflow-y-auto",
           showNav && "pb-20",
           fullHeight ? "min-h-[calc(100vh-3.5rem)]" : "p-4",
           className
