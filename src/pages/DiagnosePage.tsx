@@ -67,73 +67,122 @@ export default function DiagnosePage() {
     fetchCrops();
   }, []);
 
-  // Compress image to reduce size for API call
-  const compressImage = useCallback((file: File, maxWidth: number = 1024, quality: number = 0.7): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      const url = URL.createObjectURL(file);
-      
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-        
-        // Resize if too large
-        if (width > maxWidth) {
-          height = (height * maxWidth) / width;
-          width = maxWidth;
-        }
-        
+  const blobToDataURL = (blob: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('Failed to read image'));
+      reader.readAsDataURL(blob);
+    });
+
+  // Compress image to reduce size for API call (prevents network "Load failed")
+  const compressImage = useCallback(async (file: File): Promise<string> => {
+    const MAX_DIM = 768;
+    const TARGET_MAX_BYTES = 900 * 1024; // ~900KB
+
+    const drawToCanvas = async (): Promise<HTMLCanvasElement> => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Failed to get canvas context');
+
+      // Prefer createImageBitmap (handles more image types and is faster)
+      if ('createImageBitmap' in window) {
+        const bitmap = await createImageBitmap(file);
+        const scale = Math.min(1, MAX_DIM / Math.max(bitmap.width, bitmap.height));
+        const width = Math.max(1, Math.round(bitmap.width * scale));
+        const height = Math.max(1, Math.round(bitmap.height * scale));
+
         canvas.width = width;
         canvas.height = height;
-        
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Failed to get canvas context'));
-          return;
+        ctx.drawImage(bitmap, 0, 0, width, height);
+        if (typeof (bitmap as any).close === 'function') {
+          (bitmap as any).close();
         }
-        
-        ctx.drawImage(img, 0, 0, width, height);
-        
-        // Convert to base64 with compression
-        const base64 = canvas.toDataURL('image/jpeg', quality);
-        resolve(base64);
-      };
-      
-      img.onerror = () => {
+        return canvas;
+      }
+
+      // Fallback (should be rare)
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error('Failed to load image'));
+          img.src = url;
+        });
+      } finally {
         URL.revokeObjectURL(url);
-        reject(new Error('Failed to load image'));
-      };
-      
-      img.src = url;
+      }
+
+      const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+      const width = Math.max(1, Math.round(img.width * scale));
+      const height = Math.max(1, Math.round(img.height * scale));
+
+      canvas.width = width;
+      canvas.height = height;
+      ctx.drawImage(img, 0, 0, width, height);
+      return canvas;
+    };
+
+    const canvas = await drawToCanvas();
+
+    let quality = 0.72;
+    let blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error('Failed to compress image'))),
+        'image/jpeg',
+        quality
+      );
     });
+
+    // If still too big, progressively reduce quality
+    while (blob.size > TARGET_MAX_BYTES && quality > 0.45) {
+      quality -= 0.08;
+      blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error('Failed to compress image'))),
+          'image/jpeg',
+          quality
+        );
+      });
+    }
+
+    return blobToDataURL(blob);
   }, []);
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const url = URL.createObjectURL(file);
-      setImageUrl(url);
+    // allow selecting the same file again
+    e.target.value = '';
 
-      try {
-        // Compress image before sending
-        const compressedBase64 = await compressImage(file);
-        setImageBase64(compressedBase64);
-        console.log('Image compressed successfully, size:', Math.round(compressedBase64.length / 1024), 'KB');
-      } catch (error) {
-        console.error('Error compressing image:', error);
-        // Fallback to original image
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const base64 = reader.result as string;
-          setImageBase64(base64);
-        };
-        reader.readAsDataURL(file);
-      }
+    if (!file) return;
+
+    // Some devices may allow video capture; block it explicitly
+    if (!file.type.startsWith('image/')) {
+      toast.error(language === 'fr' ? 'Veuillez choisir une photo (pas une vidéo).' : 'Please select a photo (not a video).');
+      return;
     }
-  }, [compressImage]);
+
+    // Hard safety limit
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error(language === 'fr' ? 'Photo trop lourde. Reprenez avec une résolution plus faible.' : 'Photo too large. Please retake with lower resolution.');
+      return;
+    }
+
+    const url = URL.createObjectURL(file);
+    setImageUrl(url);
+    setImageBase64(null);
+
+    try {
+      const compressedBase64 = await compressImage(file);
+      setImageBase64(compressedBase64);
+    } catch (error) {
+      console.error('Error compressing image:', error);
+      toast.error(language === 'fr' ? 'Impossible de préparer l\'image. Essayez une autre photo.' : 'Could not prepare the image. Try another photo.');
+      setImageUrl(null);
+      setImageBase64(null);
+    }
+  }, [compressImage, language]);
 
   const handleAnalyze = async () => {
     if (!imageBase64) return;
