@@ -3,6 +3,7 @@ import { PageContainer } from '@/components/layout/PageContainer';
 import { FeatureCard } from '@/components/home/FeatureCard';
 import { WeatherWidget } from '@/components/home/WeatherWidget';
 import { AlertBanner } from '@/components/home/AlertBanner';
+import { LocalizedTips } from '@/components/home/LocalizedTips';
 import { ActivityStats } from '@/components/home/ActivityStats';
 import { useLanguage } from '@/contexts/LanguageContext';
 import heroBg from '@/assets/hero-bg.jpg';
@@ -30,9 +31,14 @@ const Index = () => {
         </div>
       </div>
 
-      {/* Alert Banner */}
+      {/* Location-based Alerts */}
       <div className="mb-4 fade-in">
         <AlertBanner />
+      </div>
+
+      {/* Location-based Tips */}
+      <div className="mb-4 fade-in" style={{ animationDelay: '50ms' }}>
+        <LocalizedTips />
       </div>
 
       {/* Weather Widget */}
