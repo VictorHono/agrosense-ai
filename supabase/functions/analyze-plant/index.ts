@@ -7,18 +7,31 @@ const corsHeaders = {
 };
 
 interface AnalysisResult {
-  disease_name: string;
-  local_name: string;
+  is_healthy: boolean;
+  detected_crop: string;
+  detected_crop_local?: string;
+  disease_name?: string;
+  local_name?: string;
   confidence: number;
-  severity: "low" | "medium" | "high" | "critical";
+  severity?: "healthy" | "low" | "medium" | "high" | "critical";
   description: string;
-  causes: string[];
-  symptoms: string[];
-  biological_treatments: string[];
-  chemical_treatments: string[];
+  causes?: string[];
+  symptoms?: string[];
+  biological_treatments?: string[];
+  chemical_treatments?: string[];
   prevention: string[];
-  affected_crop: string;
+  maintenance_tips?: string[];
+  yield_improvement_tips?: string[];
   from_database: boolean;
+}
+
+interface DBCrop {
+  id: string;
+  name: string;
+  name_local: string;
+  description: string;
+  category: string;
+  growing_season: string[];
 }
 
 interface DBDisease {
@@ -29,7 +42,7 @@ interface DBDisease {
   symptoms: string[];
   causes: string[];
   severity: string;
-  crops: { name: string; name_local: string };
+  crop_id: string;
   treatments: Array<{
     name: string;
     type: string;
@@ -84,30 +97,14 @@ function getAIProviders(): AIProvider[] {
   return providers;
 }
 
-// Search for disease in database
-async function searchDiseaseInDB(
-  supabase: any,
-  cropHint: string,
-  language: string
-): Promise<DBDisease | null> {
-  console.log("Searching database for diseases related to:", cropHint);
+// Fetch all crops and diseases from database for context
+async function fetchDatabaseContext(supabase: any): Promise<{ crops: DBCrop[]; diseases: DBDisease[] }> {
+  console.log("Fetching database context for crops and diseases...");
 
-  // First try to find the crop
   const { data: crops } = await supabase
     .from("crops")
-    .select("id, name, name_local")
-    .or(`name.ilike.%${cropHint}%,name_local.ilike.%${cropHint}%`)
-    .limit(1);
+    .select("id, name, name_local, description, category, growing_season");
 
-  if (!crops || crops.length === 0) {
-    console.log("No crop found in database for:", cropHint);
-    return null;
-  }
-
-  const crop = crops[0];
-  console.log("Found crop:", crop.name);
-
-  // Get diseases for this crop with treatments
   const { data: diseases } = await supabase
     .from("diseases")
     .select(`
@@ -118,6 +115,7 @@ async function searchDiseaseInDB(
       symptoms,
       causes,
       severity,
+      crop_id,
       treatments (
         name,
         type,
@@ -125,49 +123,73 @@ async function searchDiseaseInDB(
         dosage,
         application_method
       )
-    `)
-    .eq("crop_id", crop.id);
+    `);
 
-  if (!diseases || diseases.length === 0) {
-    console.log("No diseases found in database for crop:", crop.name);
-    return null;
-  }
-
-  // Return the first disease with crop info
+  console.log(`Found ${crops?.length || 0} crops and ${diseases?.length || 0} diseases in database`);
+  
   return {
-    ...diseases[0],
-    crops: crop,
+    crops: crops || [],
+    diseases: diseases || [],
   };
 }
 
-// Convert DB disease to analysis result format
-function dbDiseaseToResult(disease: DBDisease, confidence: number): AnalysisResult {
-  const biologicalTreatments = disease.treatments
-    ?.filter(t => t.type === "biological")
-    .map(t => `${t.name}: ${t.description} (${t.dosage})`) || [];
+// Build comprehensive database context for AI
+function buildDatabaseContext(crops: DBCrop[], diseases: DBDisease[]): string {
+  let context = `--- BASE DE DONNÉES AGRICOLE CAMEROUNAISE ---\n\n`;
+  
+  context += `CULTURES ENREGISTRÉES:\n`;
+  crops.forEach(crop => {
+    context += `- ${crop.name} (${crop.name_local || ""}): ${crop.description || ""}\n`;
+    if (crop.growing_season?.length) {
+      context += `  Saison: ${crop.growing_season.join(", ")}\n`;
+    }
+  });
+  
+  context += `\nMALADIES CONNUES:\n`;
+  diseases.forEach(disease => {
+    const crop = crops.find(c => c.id === disease.crop_id);
+    context += `- ${disease.name} (${disease.name_local || ""})\n`;
+    context += `  Culture: ${crop?.name || "Non spécifiée"}\n`;
+    context += `  Gravité: ${disease.severity || "Non spécifiée"}\n`;
+    if (disease.symptoms?.length) {
+      context += `  Symptômes: ${disease.symptoms.join(", ")}\n`;
+    }
+    if (disease.treatments?.length) {
+      context += `  Traitements: ${disease.treatments.map(t => `${t.name} (${t.type})`).join(", ")}\n`;
+    }
+  });
 
-  const chemicalTreatments = disease.treatments
-    ?.filter(t => t.type === "chemical")
-    .map(t => `${t.name}: ${t.description} (${t.dosage})`) || [];
+  context += `\nINSTRUCTION IMPORTANTE: Utilise ces données comme référence principale. Si tu identifies une maladie de cette liste, utilise les informations correspondantes. Si la plante est saine, donne des conseils d'entretien et d'amélioration du rendement adaptés au contexte camerounais.`;
+  
+  return context;
+}
 
-  return {
-    disease_name: disease.name,
-    local_name: disease.name_local || "",
-    confidence,
-    severity: disease.severity as "low" | "medium" | "high" | "critical",
-    description: disease.description || "",
-    causes: disease.causes || [],
-    symptoms: disease.symptoms || [],
-    biological_treatments: biologicalTreatments,
-    chemical_treatments: chemicalTreatments,
-    prevention: [
-      "Utilisez des variétés résistantes",
-      "Pratiquez la rotation des cultures",
-      "Maintenez une bonne hygiène au champ",
-    ],
-    affected_crop: disease.crops?.name || "",
-    from_database: true,
-  };
+// Find matching disease from database
+function findMatchingDisease(
+  diseases: DBDisease[],
+  crops: DBCrop[],
+  identifiedDisease: string,
+  identifiedCrop: string
+): { disease: DBDisease | null; crop: DBCrop | null } {
+  const cropMatch = crops.find(c => 
+    c.name.toLowerCase().includes(identifiedCrop.toLowerCase()) ||
+    (c.name_local && c.name_local.toLowerCase().includes(identifiedCrop.toLowerCase())) ||
+    identifiedCrop.toLowerCase().includes(c.name.toLowerCase())
+  );
+
+  if (!cropMatch) {
+    return { disease: null, crop: null };
+  }
+
+  const diseaseMatch = diseases.find(d => 
+    d.crop_id === cropMatch.id && (
+      d.name.toLowerCase().includes(identifiedDisease.toLowerCase()) ||
+      (d.name_local && d.name_local.toLowerCase().includes(identifiedDisease.toLowerCase())) ||
+      identifiedDisease.toLowerCase().includes(d.name.toLowerCase())
+    )
+  );
+
+  return { disease: diseaseMatch || null, crop: cropMatch };
 }
 
 function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData: string, dbContext: string) {
@@ -192,30 +214,34 @@ function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData
       {
         type: "function",
         function: {
-          name: "analyze_plant_disease",
-          description: "Analyse une image de plante et retourne les informations sur la maladie détectée",
+          name: "analyze_plant_health",
+          description: "Analyse une image de plante, détecte automatiquement le type de culture et son état de santé",
           parameters: {
             type: "object",
             properties: {
-              disease_name: { type: "string", description: "Nom scientifique ou commun de la maladie/ravageur" },
-              local_name: { type: "string", description: "Nom local camerounais si disponible" },
+              is_healthy: { type: "boolean", description: "True si la plante est en bonne santé, false si elle a une maladie ou problème" },
+              detected_crop: { type: "string", description: "Nom de la culture détectée automatiquement" },
+              detected_crop_local: { type: "string", description: "Nom local camerounais de la culture si disponible" },
+              disease_name: { type: "string", description: "Nom de la maladie/ravageur si détecté (null si plante saine)" },
+              local_name: { type: "string", description: "Nom local camerounais de la maladie si disponible" },
               confidence: { type: "number", description: "Niveau de confiance de la détection (0-100)" },
-              severity: { type: "string", enum: ["low", "medium", "high", "critical"], description: "Niveau de gravité" },
-              description: { type: "string", description: "Explication simple de la maladie" },
-              causes: { type: "array", items: { type: "string" }, description: "Causes probables" },
-              symptoms: { type: "array", items: { type: "string" }, description: "Symptômes visibles" },
-              biological_treatments: { type: "array", items: { type: "string" }, description: "Traitements biologiques disponibles au Cameroun" },
-              chemical_treatments: { type: "array", items: { type: "string" }, description: "Traitements chimiques avec noms commerciaux locaux et dosages" },
+              severity: { type: "string", enum: ["healthy", "low", "medium", "high", "critical"], description: "Niveau de gravité (healthy si plante saine)" },
+              description: { type: "string", description: "Description de l'état de la plante" },
+              causes: { type: "array", items: { type: "string" }, description: "Causes du problème (si malade)" },
+              symptoms: { type: "array", items: { type: "string" }, description: "Symptômes observés (si malade)" },
+              biological_treatments: { type: "array", items: { type: "string" }, description: "Traitements biologiques (si malade)" },
+              chemical_treatments: { type: "array", items: { type: "string" }, description: "Traitements chimiques avec noms commerciaux locaux (si malade)" },
               prevention: { type: "array", items: { type: "string" }, description: "Mesures préventives" },
-              affected_crop: { type: "string", description: "Culture concernée" },
+              maintenance_tips: { type: "array", items: { type: "string" }, description: "Conseils d'entretien adaptés au contexte camerounais (si plante saine)" },
+              yield_improvement_tips: { type: "array", items: { type: "string" }, description: "Conseils pour améliorer le rendement (si plante saine)" },
             },
-            required: ["disease_name", "confidence", "severity", "description", "causes", "symptoms", "biological_treatments", "chemical_treatments", "prevention", "affected_crop"],
+            required: ["is_healthy", "detected_crop", "confidence", "severity", "description", "prevention"],
             additionalProperties: false,
           },
         },
       },
     ],
-    tool_choice: { type: "function", function: { name: "analyze_plant_disease" } },
+    tool_choice: { type: "function", function: { name: "analyze_plant_health" } },
   };
 }
 
@@ -225,17 +251,21 @@ function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData:
     : imageData;
 
   const jsonSchema = `{
-  "disease_name": "string - Nom scientifique ou commun de la maladie/ravageur",
-  "local_name": "string - Nom local camerounais si disponible",
-  "confidence": "number - Niveau de confiance de la détection (0-100)",
-  "severity": "string - low | medium | high | critical",
-  "description": "string - Explication simple de la maladie",
-  "causes": ["array of strings - Causes probables"],
-  "symptoms": ["array of strings - Symptômes visibles"],
-  "biological_treatments": ["array of strings - Traitements biologiques disponibles au Cameroun"],
-  "chemical_treatments": ["array of strings - Traitements chimiques avec noms commerciaux locaux et dosages"],
-  "prevention": ["array of strings - Mesures préventives"],
-  "affected_crop": "string - Culture concernée"
+  "is_healthy": "boolean - true si plante saine, false si malade",
+  "detected_crop": "string - Nom de la culture détectée automatiquement",
+  "detected_crop_local": "string - Nom local camerounais de la culture",
+  "disease_name": "string ou null - Nom de la maladie si détectée",
+  "local_name": "string ou null - Nom local de la maladie",
+  "confidence": "number - Niveau de confiance 0-100",
+  "severity": "string - healthy | low | medium | high | critical",
+  "description": "string - Description de l'état de la plante",
+  "causes": ["array - Causes du problème si malade"],
+  "symptoms": ["array - Symptômes observés si malade"],
+  "biological_treatments": ["array - Traitements biologiques si malade"],
+  "chemical_treatments": ["array - Traitements chimiques si malade"],
+  "prevention": ["array - Mesures préventives"],
+  "maintenance_tips": ["array - Conseils d'entretien si plante saine"],
+  "yield_improvement_tips": ["array - Conseils amélioration rendement si plante saine"]
 }`;
 
   return {
@@ -356,7 +386,7 @@ async function callProvider(
       };
     }
 
-    console.log(`${provider.name} succeeded:`, result.disease_name);
+    console.log(`${provider.name} succeeded - Healthy: ${result.is_healthy}, Crop: ${result.detected_crop}`);
     return { success: true, result, shouldRetry: false };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -369,13 +399,73 @@ async function callProvider(
   }
 }
 
+// Enrich AI result with database information if available
+function enrichResultWithDatabase(
+  result: AnalysisResult,
+  diseases: DBDisease[],
+  crops: DBCrop[]
+): AnalysisResult {
+  if (!result.is_healthy && result.disease_name) {
+    const { disease, crop } = findMatchingDisease(
+      diseases,
+      crops,
+      result.disease_name,
+      result.detected_crop
+    );
+
+    if (disease) {
+      console.log("Enriching result with database disease:", disease.name);
+      
+      const biologicalTreatments = disease.treatments
+        ?.filter(t => t.type === "biological")
+        .map(t => `${t.name}: ${t.description}${t.dosage ? ` (${t.dosage})` : ""}`);
+      
+      const chemicalTreatments = disease.treatments
+        ?.filter(t => t.type === "chemical")
+        .map(t => `${t.name}: ${t.description}${t.dosage ? ` (${t.dosage})` : ""}`);
+
+      return {
+        ...result,
+        local_name: disease.name_local || result.local_name,
+        causes: disease.causes?.length ? disease.causes : result.causes,
+        symptoms: disease.symptoms?.length ? disease.symptoms : result.symptoms,
+        biological_treatments: biologicalTreatments?.length ? biologicalTreatments : result.biological_treatments,
+        chemical_treatments: chemicalTreatments?.length ? chemicalTreatments : result.chemical_treatments,
+        from_database: true,
+      };
+    }
+
+    if (crop) {
+      return {
+        ...result,
+        detected_crop_local: crop.name_local || result.detected_crop_local,
+      };
+    }
+  }
+
+  // For healthy plants, try to add local name
+  const matchingCrop = crops.find(c => 
+    c.name.toLowerCase().includes(result.detected_crop.toLowerCase()) ||
+    result.detected_crop.toLowerCase().includes(c.name.toLowerCase())
+  );
+
+  if (matchingCrop) {
+    return {
+      ...result,
+      detected_crop_local: matchingCrop.name_local || result.detected_crop_local,
+    };
+  }
+
+  return result;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { image, crop_hint, language = "fr" } = await req.json();
+    const { image, language = "fr" } = await req.json();
 
     if (!image) {
       console.error("No image provided");
@@ -390,47 +480,12 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // STEP 1: Search database for diseases related to the crop
-    let dbDisease: DBDisease | null = null;
-    let dbContext = "";
-
-    if (crop_hint) {
-      dbDisease = await searchDiseaseInDB(supabase, crop_hint, language);
-      
-      if (dbDisease) {
-        console.log("Found disease in database:", dbDisease.name);
-        
-        // Build context from database for AI to use
-        dbContext = `DONNÉES DE RÉFÉRENCE (Base de données locale):
-Culture: ${dbDisease.crops?.name} (${dbDisease.crops?.name_local || ""})
-Maladies connues pour cette culture:
-- ${dbDisease.name} (${dbDisease.name_local || ""}): ${dbDisease.description}
-  Symptômes: ${dbDisease.symptoms?.join(", ") || "Non spécifiés"}
-  Causes: ${dbDisease.causes?.join(", ") || "Non spécifiées"}
-  Traitements disponibles: ${dbDisease.treatments?.map(t => t.name).join(", ") || "Non spécifiés"}
-
-INSTRUCTION: Utilise ces données de référence locales comme base principale. 
-Si l'image correspond à cette maladie, utilise ces informations.
-Si c'est une maladie différente, fais une analyse externe mais privilégie toujours les solutions locales camerounaises.`;
-      }
-    }
+    // Fetch all database context
+    const { crops, diseases } = await fetchDatabaseContext(supabase);
+    const dbContext = buildDatabaseContext(crops, diseases);
 
     const providers = getAIProviders();
     if (providers.length === 0) {
-      // If no AI providers and we have DB data, return DB result
-      if (dbDisease) {
-        console.log("No AI providers, returning database result");
-        return new Response(
-          JSON.stringify({
-            success: true,
-            analysis: dbDiseaseToResult(dbDisease, 70),
-            analyzed_at: new Date().toISOString(),
-            source: "database",
-          }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
       console.error("No AI providers configured");
       return new Response(
         JSON.stringify({ error: "Aucun fournisseur IA configuré" }),
@@ -439,29 +494,37 @@ Si c'est une maladie différente, fais une analyse externe mais privilégie touj
     }
 
     console.log(`Available providers: ${providers.map(p => p.name).join(", ")}`);
-    console.log("Crop hint:", crop_hint);
     console.log("Language:", language);
 
     const systemPrompt = `Tu es un expert agronome spécialisé dans les cultures camerounaises et les maladies des plantes en Afrique centrale.
-Tu dois analyser l'image fournie et identifier:
-1. La culture concernée
-2. La maladie, le ravageur ou la carence détectée
-3. Le niveau de gravité
-4. Les solutions adaptées au contexte camerounais
 
-IMPORTANT:
+TÂCHE PRINCIPALE:
+1. DÉTECTE AUTOMATIQUEMENT le type de culture/plante dans l'image
+2. ÉVALUE l'état de santé de la plante
+3. Si MALADE: identifie la maladie et propose des traitements locaux
+4. Si SAINE: confirme la bonne santé et donne des conseils d'entretien et d'amélioration du rendement
+
+INSTRUCTIONS IMPORTANTES:
+- Détecte automatiquement la culture sans que l'utilisateur ait besoin de la spécifier
 - PRIORISE les données de la base de données locale si elles sont fournies
-- Propose UNIQUEMENT des traitements disponibles au Cameroun
+- Propose UNIQUEMENT des solutions disponibles au Cameroun
 - Inclus des noms locaux quand disponibles
-- Priorise les solutions biologiques
-- Pour les traitements chimiques, utilise des produits commerciaux disponibles localement
+- Si la plante est en bonne santé, donne des conseils pratiques pour:
+  * Maintenir cette bonne santé
+  * Améliorer le rendement de la culture
+  * Prévenir les maladies courantes
 - Adapte le vocabulaire pour des agriculteurs avec un niveau d'éducation variable
 
-Cultures camerounaises courantes: cacao, café, maïs, manioc, banane plantain, tomate, gombo, arachide, haricot, igname, macabo, patate douce.`;
+Cultures camerounaises courantes: cacao, café, maïs, manioc, banane plantain, tomate, gombo, arachide, haricot, igname, macabo, patate douce, poivron, piment, ananas, palmier à huile.`;
 
-    const userPrompt = `Analyse cette image de plante${crop_hint ? ` (indice: ${crop_hint})` : ""}.
+    const userPrompt = `Analyse cette image de plante.
 
-Réponds en ${language === "fr" ? "français" : "anglais"} avec les informations structurées sur la maladie détectée.`;
+1. Identifie automatiquement le type de culture
+2. Évalue si la plante est en bonne santé ou malade
+3. Si malade: donne le diagnostic complet avec traitements
+4. Si saine: confirme la bonne santé et donne des conseils d'entretien et d'amélioration du rendement adaptés au contexte camerounais
+
+Réponds en ${language === "fr" ? "français" : "anglais"}.`;
 
     let lastError = "";
     let usedProvider = "";
@@ -477,13 +540,16 @@ Réponds en ${language === "fr" ? "français" : "anglais"} avec les informations
 
       if (success && result) {
         usedProvider = provider.name;
+        
+        // Enrich with database info
+        const enrichedResult = enrichResultWithDatabase(result, diseases, crops);
+        
         return new Response(
           JSON.stringify({
             success: true,
-            analysis: result,
+            analysis: enrichedResult,
             analyzed_at: new Date().toISOString(),
             provider: usedProvider,
-            database_context_used: !!dbContext,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
@@ -499,22 +565,8 @@ Réponds en ${language === "fr" ? "français" : "anglais"} avec les informations
       console.log(`${provider.name} failed, trying next provider...`);
     }
 
-    // All AI providers failed - try to return DB result if available
-    if (dbDisease) {
-      console.log("All AI providers failed, returning database result as fallback");
-      return new Response(
-        JSON.stringify({
-          success: true,
-          analysis: dbDiseaseToResult(dbDisease, 60),
-          analyzed_at: new Date().toISOString(),
-          source: "database_fallback",
-          ai_error: lastError,
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    console.error("All AI providers failed. Last error:", lastError);
+    // All providers failed
+    console.error("All providers failed. Last error:", lastError);
     return new Response(
       JSON.stringify({ 
         error: "Tous les services IA sont temporairement indisponibles. Veuillez réessayer plus tard.",

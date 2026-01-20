@@ -1,21 +1,45 @@
 import { useState, useRef, useCallback } from 'react';
-import { Camera, Upload, Loader2, ChevronLeft, TrendingUp, Star, Package } from 'lucide-react';
+import { Camera, Upload, Loader2, ChevronLeft, TrendingUp, Star, Package, Sparkles, AlertTriangle, Leaf } from 'lucide-react';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { cn } from '@/lib/utils';
-import { CROP_LABELS, type Crop, type HarvestResult } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
 type AnalysisStep = 'capture' | 'analyzing' | 'result';
+
+interface HarvestResult {
+  is_good_quality: boolean;
+  detected_crop: string;
+  detected_crop_local?: string;
+  grade: 'A' | 'B' | 'C';
+  quality: {
+    color: number;
+    size: number;
+    defects: number;
+    uniformity: number;
+    maturity: number;
+  };
+  issues_detected?: string[];
+  recommendedUse: string[];
+  estimatedPrice: {
+    min: number;
+    max: number;
+    currency: string;
+    unit: string;
+    market: string;
+  };
+  feedback: string;
+  improvement_tips: string[];
+  storage_tips: string[];
+}
 
 export default function HarvestPage() {
   const { t, language } = useLanguage();
   const [step, setStep] = useState<AnalysisStep>('capture');
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageBase64, setImageBase64] = useState<string | null>(null);
-  const [selectedCrop, setSelectedCrop] = useState<Crop | null>(null);
   const [result, setResult] = useState<HarvestResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -26,7 +50,6 @@ export default function HarvestPage() {
       const url = URL.createObjectURL(file);
       setImageUrl(url);
 
-      // Convert to base64 for API
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64 = reader.result as string;
@@ -37,7 +60,7 @@ export default function HarvestPage() {
   }, []);
 
   const handleAnalyze = async () => {
-    if (!imageBase64 || !selectedCrop) return;
+    if (!imageBase64) return;
     
     setStep('analyzing');
     
@@ -45,7 +68,6 @@ export default function HarvestPage() {
       const { data, error } = await supabase.functions.invoke('analyze-harvest', {
         body: {
           image: imageBase64,
-          crop_type: CROP_LABELS[selectedCrop][language],
           language,
         },
       });
@@ -73,7 +95,6 @@ export default function HarvestPage() {
     setStep('capture');
     setImageUrl(null);
     setImageBase64(null);
-    setSelectedCrop(null);
     setResult(null);
   };
 
@@ -89,9 +110,7 @@ export default function HarvestPage() {
     C: { fr: 'Qualité moyenne - Transformation', en: 'Average quality - Processing' },
   };
 
-  const popularCrops: Crop[] = ['mais', 'cacao', 'manioc', 'banane-plantain', 'tomate', 'cafe'];
-
-  const QualityBar = ({ label, value }: { label: string; value: number }) => (
+  const QualityBar = ({ label, value, isDefect = false }: { label: string; value: number; isDefect?: boolean }) => (
     <div className="space-y-1">
       <div className="flex justify-between text-xs">
         <span className="text-muted-foreground">{label}</span>
@@ -101,7 +120,9 @@ export default function HarvestPage() {
         <div 
           className={cn(
             "h-full rounded-full transition-all duration-500",
-            value >= 80 ? "bg-success" : value >= 60 ? "bg-warning" : "bg-destructive"
+            isDefect 
+              ? "bg-destructive/60"
+              : value >= 80 ? "bg-success" : value >= 60 ? "bg-warning" : "bg-destructive"
           )}
           style={{ width: `${value}%` }}
         />
@@ -111,7 +132,6 @@ export default function HarvestPage() {
 
   return (
     <PageContainer title={t('harvest.title')}>
-      {/* Back button on result */}
       {step !== 'capture' && (
         <Button 
           variant="ghost" 
@@ -127,7 +147,6 @@ export default function HarvestPage() {
       {/* CAPTURE STEP */}
       {step === 'capture' && (
         <div className="space-y-6 fade-in">
-          {/* Image Preview or Camera Options */}
           {imageUrl ? (
             <div className="space-y-4">
               <div className="relative aspect-square rounded-2xl overflow-hidden bg-muted">
@@ -149,26 +168,15 @@ export default function HarvestPage() {
                 </Button>
               </div>
 
-              {/* Crop Selection */}
-              <div>
-                <label className="text-sm font-medium text-foreground mb-2 block">
-                  {language === 'fr' ? 'Quel produit analysez-vous ?' : 'What product are you analyzing?'}
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {popularCrops.map((crop) => (
-                    <button
-                      key={crop}
-                      onClick={() => setSelectedCrop(crop)}
-                      className={cn(
-                        "px-3 py-2 rounded-lg text-sm font-medium transition-all",
-                        selectedCrop === crop
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-muted-foreground hover:bg-muted/80"
-                      )}
-                    >
-                      {CROP_LABELS[crop][language]}
-                    </button>
-                  ))}
+              {/* AI Detection Info */}
+              <div className="p-3 rounded-xl bg-accent/10 border border-accent/20">
+                <div className="flex items-center gap-2 text-sm text-accent-foreground">
+                  <Sparkles className="w-4 h-4" />
+                  <span className="font-medium">
+                    {language === 'fr' 
+                      ? "L'IA détectera automatiquement le type de produit" 
+                      : "AI will automatically detect the product type"}
+                  </span>
                 </div>
               </div>
 
@@ -178,7 +186,6 @@ export default function HarvestPage() {
                 size="xl"
                 className="w-full"
                 onClick={handleAnalyze}
-                disabled={!selectedCrop}
               >
                 <TrendingUp className="w-5 h-5 mr-2" />
                 {language === 'fr' ? 'Analyser la qualité' : 'Analyze quality'}
@@ -194,12 +201,12 @@ export default function HarvestPage() {
                   </div>
                   <div>
                     <h3 className="font-semibold text-foreground text-sm">
-                      {language === 'fr' ? 'Conseils pour une bonne analyse' : 'Tips for good analysis'}
+                      {language === 'fr' ? 'Comment ça marche ?' : 'How does it work?'}
                     </h3>
                     <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-                      <li>• {language === 'fr' ? 'Photographiez plusieurs produits ensemble' : 'Photograph multiple products together'}</li>
-                      <li>• {language === 'fr' ? 'Utilisez un fond uni et clair' : 'Use a plain, light background'}</li>
-                      <li>• {language === 'fr' ? 'Montrez les produits de face' : 'Show products from the front'}</li>
+                      <li>• {language === 'fr' ? "Prenez une photo de votre récolte" : "Take a photo of your harvest"}</li>
+                      <li>• {language === 'fr' ? "L'IA détecte automatiquement le produit" : "AI automatically detects the product"}</li>
+                      <li>• {language === 'fr' ? "Recevez grade, prix et conseils" : "Get grade, price and tips"}</li>
                     </ul>
                   </div>
                 </div>
@@ -264,7 +271,7 @@ export default function HarvestPage() {
             {language === 'fr' ? 'Analyse en cours...' : 'Analyzing...'}
           </p>
           <p className="text-sm text-muted-foreground mt-1">
-            {language === 'fr' ? 'Évaluation de la qualité de votre récolte' : 'Evaluating your harvest quality'}
+            {language === 'fr' ? 'Détection automatique du produit' : 'Automatic product detection'}
           </p>
         </div>
       )}
@@ -291,7 +298,10 @@ export default function HarvestPage() {
                     {result.grade}
                   </span>
                   <div>
-                    <h2 className="font-bold text-foreground">{t('harvest.grade')}</h2>
+                    <h2 className="font-bold text-foreground">{result.detected_crop}</h2>
+                    {result.detected_crop_local && (
+                      <p className="text-xs text-muted-foreground">{result.detected_crop_local}</p>
+                    )}
                     <p className="text-sm text-muted-foreground">
                       {gradeDescriptions[result.grade][language]}
                     </p>
@@ -300,6 +310,24 @@ export default function HarvestPage() {
               </div>
             </div>
           </div>
+
+          {/* Issues Detected */}
+          {result.issues_detected && result.issues_detected.length > 0 && (
+            <div className="p-4 rounded-xl bg-destructive/5 border border-destructive/20">
+              <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-destructive" />
+                {language === 'fr' ? 'Problèmes détectés' : 'Issues Detected'}
+              </h3>
+              <ul className="space-y-2">
+                {result.issues_detected.map((issue, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                    <span className="w-1.5 h-1.5 rounded-full bg-destructive shrink-0 mt-1.5" />
+                    {issue}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Quality Metrics */}
           <div className="p-4 rounded-xl bg-card border border-border space-y-4">
@@ -310,18 +338,11 @@ export default function HarvestPage() {
             <QualityBar label={language === 'fr' ? 'Taille' : 'Size'} value={result.quality.size} />
             <QualityBar label={language === 'fr' ? 'Uniformité' : 'Uniformity'} value={result.quality.uniformity} />
             <QualityBar label={language === 'fr' ? 'Maturité' : 'Maturity'} value={result.quality.maturity} />
-            <div className="space-y-1">
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">{language === 'fr' ? 'Défauts' : 'Defects'}</span>
-                <span className="font-medium text-foreground">{result.quality.defects}%</span>
-              </div>
-              <div className="h-2 bg-muted rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-destructive/60 rounded-full"
-                  style={{ width: `${result.quality.defects}%` }}
-                />
-              </div>
-            </div>
+            <QualityBar 
+              label={language === 'fr' ? 'Défauts' : 'Defects'} 
+              value={result.quality.defects} 
+              isDefect={true}
+            />
           </div>
 
           {/* Feedback */}
@@ -371,6 +392,44 @@ export default function HarvestPage() {
               ))}
             </div>
           </div>
+
+          {/* Improvement Tips */}
+          {result.improvement_tips && result.improvement_tips.length > 0 && (
+            <div className="p-4 rounded-xl bg-primary/5 border border-primary/20">
+              <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-primary" />
+                {language === 'fr' ? 'Améliorer les prochaines récoltes' : 'Improve Future Harvests'}
+              </h3>
+              <ul className="space-y-2">
+                {result.improvement_tips.map((tip, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                    <span className="w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-medium shrink-0">
+                      {i + 1}
+                    </span>
+                    {tip}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Storage Tips */}
+          {result.storage_tips && result.storage_tips.length > 0 && (
+            <div className="p-4 rounded-xl bg-card border border-border">
+              <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                <Leaf className="w-4 h-4 text-success" />
+                {language === 'fr' ? 'Conseils de stockage' : 'Storage Tips'}
+              </h3>
+              <ul className="space-y-2">
+                {result.storage_tips.map((tip, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                    <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0 mt-1.5" />
+                    {tip}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* New Analysis Button */}
           <Button 
