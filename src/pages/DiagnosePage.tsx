@@ -1,265 +1,61 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
-import { Camera, Upload, Loader2, Volume2, ChevronLeft, AlertTriangle, Check, Leaf, Sparkles, TrendingUp, HelpCircle } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Camera, Upload, Loader2, Volume2, ChevronLeft, AlertTriangle, Check, Leaf, Sparkles, TrendingUp, HelpCircle, RefreshCw } from 'lucide-react';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { cn } from '@/lib/utils';
-import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-
-type AnalysisStep = 'capture' | 'analyzing' | 'result';
-
-interface Crop {
-  id: string;
-  name: string;
-  name_local: string | null;
-}
-
-interface AnalysisResult {
-  is_healthy: boolean;
-  detected_crop: string;
-  detected_crop_local?: string;
-  disease_name?: string;
-  local_name?: string;
-  confidence: number;
-  severity?: 'healthy' | 'low' | 'medium' | 'high' | 'critical';
-  description: string;
-  causes?: string[];
-  symptoms?: string[];
-  biological_treatments?: string[];
-  chemical_treatments?: string[];
-  prevention: string[];
-  maintenance_tips?: string[];
-  yield_improvement_tips?: string[];
-}
+import { useDiagnosis } from '@/hooks/useDiagnosis';
+import { CompressionIndicator } from '@/components/diagnose/CompressionIndicator';
+import { NetworkStatus, OnlineIndicator } from '@/components/diagnose/NetworkStatus';
 
 export default function DiagnosePage() {
   const { t, language } = useLanguage();
-  const [step, setStep] = useState<AnalysisStep>('capture');
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [imageBase64, setImageBase64] = useState<string | null>(null);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [isReading, setIsReading] = useState(false);
-  const [crops, setCrops] = useState<Crop[]>([]);
-  const [selectedCrop, setSelectedCrop] = useState<string>('auto');
-  const [loadingCrops, setLoadingCrops] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const [isReading, setIsReading] = useState(false);
 
-  // Fetch crops from database
-  useEffect(() => {
-    const fetchCrops = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('crops')
-          .select('id, name, name_local')
-          .order('name');
-        
-        if (error) throw error;
-        setCrops(data || []);
-      } catch (error) {
-        console.error('Error fetching crops:', error);
-      } finally {
-        setLoadingCrops(false);
-      }
-    };
-    fetchCrops();
-  }, []);
+  const {
+    step,
+    compressionStep,
+    compressionProgress,
+    imageUrl,
+    imageBase64,
+    result,
+    crops,
+    selectedCrop,
+    loadingCrops,
+    isOnline,
+    retryCount,
+    maxRetries,
+    isReady,
+    isCompressing,
+    handleFileSelect,
+    analyze,
+    reset,
+    setSelectedCrop,
+    clearImage,
+  } = useDiagnosis(language);
 
-  const blobToBase64 = (blob: Blob): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const dataUrl = reader.result as string;
-        const base64 = dataUrl.includes(",") ? dataUrl.split(",")[1] : dataUrl;
-        resolve(base64);
-      };
-      reader.onerror = () => reject(new Error('Failed to read image'));
-      reader.readAsDataURL(blob);
-    });
-
-  // Compress image to reduce size for API call (prevents network "Load failed")
-  // NOTE: we keep the *raw* base64 (without "data:image/..." prefix) to minimize payload size.
-  const compressImage = useCallback(async (file: File): Promise<string> => {
-    let maxDim = 768;
-    const TARGET_MAX_BYTES = 450 * 1024; // keep JSON payload small even after base64 overhead
-
-    const encodeJpeg = (canvas: HTMLCanvasElement, quality: number): Promise<Blob> =>
-      new Promise((resolve, reject) => {
-        canvas.toBlob(
-          (b) => (b ? resolve(b) : reject(new Error('Failed to compress image'))),
-          'image/jpeg',
-          quality
-        );
-      });
-
-    const drawToCanvas = async (dim: number): Promise<HTMLCanvasElement> => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('Failed to get canvas context');
-
-      // Prefer createImageBitmap (handles more image types and is faster)
-      if ('createImageBitmap' in window) {
-        const bitmap = await createImageBitmap(file);
-        const scale = Math.min(1, dim / Math.max(bitmap.width, bitmap.height));
-        const width = Math.max(1, Math.round(bitmap.width * scale));
-        const height = Math.max(1, Math.round(bitmap.height * scale));
-
-        canvas.width = width;
-        canvas.height = height;
-        ctx.drawImage(bitmap, 0, 0, width, height);
-        if (typeof (bitmap as any).close === 'function') (bitmap as any).close();
-        return canvas;
-      }
-
-      // Fallback (should be rare)
-      const img = new Image();
-      const url = URL.createObjectURL(file);
-      try {
-        await new Promise<void>((resolve, reject) => {
-          img.onload = () => resolve();
-          img.onerror = () => reject(new Error('Failed to load image'));
-          img.src = url;
-        });
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-
-      const scale = Math.min(1, dim / Math.max(img.width, img.height));
-      const width = Math.max(1, Math.round(img.width * scale));
-      const height = Math.max(1, Math.round(img.height * scale));
-
-      canvas.width = width;
-      canvas.height = height;
-      ctx.drawImage(img, 0, 0, width, height);
-      return canvas;
-    };
-
-    const tryEncodeWithinLimit = async (canvas: HTMLCanvasElement) => {
-      let quality = 0.72;
-      let blob = await encodeJpeg(canvas, quality);
-
-      // If still too big, progressively reduce quality
-      while (blob.size > TARGET_MAX_BYTES && quality > 0.35) {
-        quality -= 0.07;
-        blob = await encodeJpeg(canvas, quality);
-      }
-
-      return blob;
-    };
-
-    console.log('[diagnose] original file', { type: file.type, bytes: file.size });
-
-    // Pass 1: normal downscale
-    let canvas = await drawToCanvas(maxDim);
-    let blob = await tryEncodeWithinLimit(canvas);
-
-    // Pass 2: if still too big (some devices produce heavy images), reduce dimensions and retry
-    while (blob.size > TARGET_MAX_BYTES && maxDim > 512) {
-      maxDim = Math.floor(maxDim * 0.85);
-      canvas = await drawToCanvas(maxDim);
-      blob = await tryEncodeWithinLimit(canvas);
-    }
-
-    if (blob.size > TARGET_MAX_BYTES) {
-      throw new Error(
-        language === 'fr'
-          ? 'Photo trop lourde. Reprenez une photo plus proche/moins zoomée.'
-          : 'Photo still too large. Please retake with lower detail/closer shot.'
-      );
-    }
-
-    console.log('[diagnose] compressed image', { maxDim, bytes: blob.size });
-    return blobToBase64(blob);
-  }, [language]);
-
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    // allow selecting the same file again
-    e.target.value = '';
-
-    if (!file) return;
-
-    // Some devices may allow video capture; block it explicitly
-    if (!file.type.startsWith('image/')) {
-      toast.error(language === 'fr' ? 'Veuillez choisir une photo (pas une vidéo).' : 'Please select a photo (not a video).');
-      return;
-    }
-
-    // Hard safety limit
-    if (file.size > 15 * 1024 * 1024) {
-      toast.error(language === 'fr' ? 'Photo trop lourde. Reprenez avec une résolution plus faible.' : 'Photo too large. Please retake with lower resolution.');
-      return;
-    }
-
-    const url = URL.createObjectURL(file);
-    setImageUrl(url);
-    setImageBase64(null);
-
-    try {
-      const compressedBase64 = await compressImage(file);
-      setImageBase64(compressedBase64);
-    } catch (error) {
-      console.error('Error compressing image:', error);
-      toast.error(language === 'fr' ? 'Impossible de préparer l\'image. Essayez une autre photo.' : 'Could not prepare the image. Try another photo.');
-      setImageUrl(null);
-      setImageBase64(null);
-    }
-  }, [compressImage, language]);
-
-  const handleAnalyze = async () => {
-    if (!imageBase64) return;
-    
-    setStep('analyzing');
-    
-    try {
-      // Find selected crop name if not auto
-      let userSpecifiedCrop: string | undefined;
-      if (selectedCrop !== 'auto') {
-        const crop = crops.find(c => c.id === selectedCrop);
-        userSpecifiedCrop = crop?.name;
-      }
-
-      const { data, error } = await supabase.functions.invoke('analyze-plant', {
-        body: {
-          image: imageBase64,
-          language: language,
-          userSpecifiedCrop: userSpecifiedCrop,
-        },
-      });
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      if (data.success && data.analysis) {
-        setResult(data.analysis);
-        setStep('result');
-      } else {
-        throw new Error('Résultat inattendu');
-      }
-    } catch (error) {
-      console.error('Analysis error:', error);
-      toast.error(
-        error instanceof Error 
-          ? error.message 
-          : 'Erreur lors de l\'analyse. Veuillez réessayer.'
-      );
-      setStep('capture');
+    e.target.value = ''; // Allow re-selection
+    if (file) {
+      await handleFileSelect(file);
     }
   };
 
-  const resetAnalysis = () => {
-    setStep('capture');
-    setImageUrl(null);
-    setImageBase64(null);
-    setResult(null);
-    setSelectedCrop('auto');
+  const handleAnalyze = async () => {
+    if (!isReady) {
+      toast.error(language === 'fr' ? 'Image pas encore prête.' : 'Image not ready yet.');
+      return;
+    }
+    if (!isOnline) {
+      toast.error(language === 'fr' ? 'Pas de connexion Internet.' : 'No internet connection.');
+      return;
+    }
+    await analyze();
   };
 
   const speakResult = () => {
@@ -299,7 +95,7 @@ export default function DiagnosePage() {
     utterance.onend = () => setIsReading(false);
     utterance.onerror = () => {
       setIsReading(false);
-      toast.error('Impossible de lire le texte');
+      toast.error(language === 'fr' ? 'Lecture impossible' : 'Cannot read');
     };
 
     window.speechSynthesis.cancel();
@@ -324,23 +120,33 @@ export default function DiagnosePage() {
 
   return (
     <PageContainer title={t('disease.title')}>
-      {step !== 'capture' && (
+      {/* Network status banner */}
+      <NetworkStatus 
+        isOnline={isOnline} 
+        retryCount={retryCount} 
+        maxRetries={maxRetries} 
+        language={language} 
+      />
+
+      {/* Back button */}
+      {step !== 'capture' && step !== 'compressing' && (
         <Button 
           variant="ghost" 
           size="sm" 
           className="mb-4"
-          onClick={resetAnalysis}
+          onClick={reset}
         >
           <ChevronLeft className="w-4 h-4 mr-1" />
           {t('common.back')}
         </Button>
       )}
 
-      {/* CAPTURE STEP */}
-      {step === 'capture' && (
+      {/* CAPTURE / COMPRESSING STEP */}
+      {(step === 'capture' || step === 'compressing') && (
         <div className="space-y-6 fade-in">
           {imageUrl ? (
             <div className="space-y-4">
+              {/* Image preview */}
               <div className="relative aspect-square rounded-2xl overflow-hidden bg-muted">
                 <img 
                   src={imageUrl} 
@@ -351,45 +157,59 @@ export default function DiagnosePage() {
                   variant="secondary"
                   size="sm"
                   className="absolute top-3 right-3"
-                  onClick={() => {
-                    setImageUrl(null);
-                    setImageBase64(null);
-                  }}
+                  onClick={clearImage}
+                  disabled={isCompressing}
                 >
                   {language === 'fr' ? 'Changer' : 'Change'}
                 </Button>
+                
+                {/* Online indicator */}
+                <div className="absolute top-3 left-3 bg-background/80 backdrop-blur-sm px-2 py-1 rounded-full">
+                  <OnlineIndicator isOnline={isOnline} language={language} />
+                </div>
               </div>
 
-              {/* Crop Selection */}
-              <div className="p-4 rounded-xl bg-card border border-border">
-                <label className="block text-sm font-medium text-foreground mb-2">
-                  {language === 'fr' ? 'Type de plante' : 'Plant type'}
-                </label>
-                <Select value={selectedCrop} onValueChange={setSelectedCrop} disabled={loadingCrops}>
-                  <SelectTrigger className="w-full bg-background">
-                    <SelectValue placeholder={language === 'fr' ? 'Sélectionner...' : 'Select...'} />
-                  </SelectTrigger>
-                  <SelectContent className="bg-popover border border-border z-50">
-                    <SelectItem value="auto">
-                      <div className="flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-primary" />
-                        <span>{language === 'fr' ? 'Détection automatique (IA)' : 'Auto-detect (AI)'}</span>
-                      </div>
-                    </SelectItem>
-                    {crops.map((crop) => (
-                      <SelectItem key={crop.id} value={crop.id}>
-                        {crop.name} {crop.name_local ? `(${crop.name_local})` : ''}
+              {/* Compression progress indicator */}
+              {isCompressing && (
+                <CompressionIndicator 
+                  step={compressionStep} 
+                  progress={compressionProgress} 
+                  language={language} 
+                />
+              )}
+
+              {/* Crop Selection - only show when ready */}
+              {isReady && (
+                <div className="p-4 rounded-xl bg-card border border-border">
+                  <label className="block text-sm font-medium text-foreground mb-2">
+                    {language === 'fr' ? 'Type de plante' : 'Plant type'}
+                  </label>
+                  <Select value={selectedCrop} onValueChange={setSelectedCrop} disabled={loadingCrops}>
+                    <SelectTrigger className="w-full bg-background">
+                      <SelectValue placeholder={language === 'fr' ? 'Sélectionner...' : 'Select...'} />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover border border-border z-50">
+                      <SelectItem value="auto">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="w-4 h-4 text-primary" />
+                          <span>{language === 'fr' ? 'Détection automatique (IA)' : 'Auto-detect (AI)'}</span>
+                        </div>
                       </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="mt-2 text-xs text-muted-foreground flex items-start gap-1.5">
-                  <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  {language === 'fr' 
-                    ? "Si vous connaissez la plante, sélectionnez-la pour un diagnostic plus précis. Sinon, laissez sur détection automatique." 
-                    : "If you know the plant, select it for a more accurate diagnosis. Otherwise, leave on auto-detect."}
-                </p>
-              </div>
+                      {crops.map((crop) => (
+                        <SelectItem key={crop.id} value={crop.id}>
+                          {crop.name} {crop.name_local ? `(${crop.name_local})` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-2 text-xs text-muted-foreground flex items-start gap-1.5">
+                    <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                    {language === 'fr' 
+                      ? "Sélectionnez votre plante pour un diagnostic plus précis." 
+                      : "Select your plant for a more accurate diagnosis."}
+                  </p>
+                </div>
+              )}
 
               {/* Analyze Button */}
               <Button
@@ -397,9 +217,24 @@ export default function DiagnosePage() {
                 size="xl"
                 className="w-full"
                 onClick={handleAnalyze}
+                disabled={!isReady || isCompressing || !isOnline}
               >
-                <Camera className="w-5 h-5 mr-2" />
-                {language === 'fr' ? 'Analyser la plante' : 'Analyze plant'}
+                {isCompressing ? (
+                  <>
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    {language === 'fr' ? 'Préparation...' : 'Preparing...'}
+                  </>
+                ) : !isOnline ? (
+                  <>
+                    <RefreshCw className="w-5 h-5 mr-2" />
+                    {language === 'fr' ? 'Hors ligne' : 'Offline'}
+                  </>
+                ) : (
+                  <>
+                    <Camera className="w-5 h-5 mr-2" />
+                    {language === 'fr' ? 'Analyser la plante' : 'Analyze plant'}
+                  </>
+                )}
               </Button>
             </div>
           ) : (
@@ -410,10 +245,13 @@ export default function DiagnosePage() {
                   <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
                     <Leaf className="w-5 h-5 text-primary" />
                   </div>
-                  <div>
-                    <h3 className="font-semibold text-foreground text-sm">
-                      {language === 'fr' ? 'Comment ça marche ?' : 'How does it work?'}
-                    </h3>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-semibold text-foreground text-sm">
+                        {language === 'fr' ? 'Comment ça marche ?' : 'How does it work?'}
+                      </h3>
+                      <OnlineIndicator isOnline={isOnline} language={language} />
+                    </div>
                     <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
                       <li>• {language === 'fr' ? "Prenez une photo de votre plante" : "Take a photo of your plant"}</li>
                       <li>• {language === 'fr' ? "L'IA détecte automatiquement le type de culture" : "AI automatically detects the crop type"}</li>
@@ -430,6 +268,7 @@ export default function DiagnosePage() {
                   size="lg"
                   className="h-32 flex-col gap-2"
                   onClick={() => cameraInputRef.current?.click()}
+                  disabled={!isOnline}
                 >
                   <Camera className="w-8 h-8" />
                   <span>{t('disease.take_photo')}</span>
@@ -439,6 +278,7 @@ export default function DiagnosePage() {
                   size="lg"
                   className="h-32 flex-col gap-2"
                   onClick={() => fileInputRef.current?.click()}
+                  disabled={!isOnline}
                 >
                   <Upload className="w-8 h-8" />
                   <span>{t('disease.upload')}</span>
@@ -452,14 +292,14 @@ export default function DiagnosePage() {
                 accept="image/*"
                 capture="environment"
                 className="hidden"
-                onChange={handleFileSelect}
+                onChange={onFileChange}
               />
               <input
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
                 className="hidden"
-                onChange={handleFileSelect}
+                onChange={onFileChange}
               />
             </div>
           )}
@@ -483,7 +323,10 @@ export default function DiagnosePage() {
           <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
           <p className="text-lg font-semibold text-foreground">{t('disease.analyzing')}</p>
           <p className="text-sm text-muted-foreground mt-1">
-            {language === 'fr' ? 'Détection automatique en cours...' : 'Automatic detection in progress...'}
+            {retryCount > 0 
+              ? (language === 'fr' ? `Tentative ${retryCount}/${maxRetries}...` : `Attempt ${retryCount}/${maxRetries}...`)
+              : (language === 'fr' ? 'Analyse IA en cours...' : 'AI analysis in progress...')
+            }
           </p>
         </div>
       )}
@@ -719,7 +562,7 @@ export default function DiagnosePage() {
             variant="outline" 
             className="w-full" 
             size="lg"
-            onClick={resetAnalysis}
+            onClick={reset}
           >
             {language === 'fr' ? 'Nouvelle analyse' : 'New analysis'}
           </Button>
