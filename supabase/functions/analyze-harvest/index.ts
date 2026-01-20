@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -23,6 +24,7 @@ interface HarvestResult {
     market: string;
   };
   feedback: string;
+  from_database: boolean;
 }
 
 interface AIProvider {
@@ -70,7 +72,49 @@ function getAIProviders(): AIProvider[] {
   return providers;
 }
 
-function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData: string) {
+// Fetch market prices from database
+async function fetchMarketPrices(supabase: any, cropType: string): Promise<any[]> {
+  console.log("Searching market prices for:", cropType);
+
+  // First find the crop
+  const { data: crops } = await supabase
+    .from("crops")
+    .select("id, name")
+    .or(`name.ilike.%${cropType}%,name_local.ilike.%${cropType}%`)
+    .limit(1);
+
+  if (!crops || crops.length === 0) {
+    console.log("No crop found for:", cropType);
+    return [];
+  }
+
+  const cropId = crops[0].id;
+
+  // Get market prices for this crop
+  const { data: prices } = await supabase
+    .from("market_prices")
+    .select("*")
+    .eq("crop_id", cropId)
+    .order("recorded_at", { ascending: false })
+    .limit(5);
+
+  console.log("Found prices:", prices?.length || 0);
+  return prices || [];
+}
+
+// Build price context for AI
+function buildPriceContext(prices: any[]): string {
+  if (prices.length === 0) return "";
+
+  let context = "\n--- PRIX DU MARCHÉ (Base de données locale) ---\n";
+  prices.forEach(p => {
+    context += `Grade ${p.quality_grade || "A"}: ${p.price_min}-${p.price_max} ${p.currency}/${p.unit} au ${p.market_name} (${p.region})\n`;
+  });
+  context += "\nUTILISE CES PRIX COMME RÉFÉRENCE PRINCIPALE pour l'estimation.\n";
+  return context;
+}
+
+function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData: string, priceContext: string) {
   return {
     model: "google/gemini-2.5-flash",
     messages: [
@@ -78,7 +122,7 @@ function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData
       {
         role: "user",
         content: [
-          { type: "text", text: userPrompt },
+          { type: "text", text: `${priceContext}\n\n${userPrompt}` },
           {
             type: "image_url",
             image_url: {
@@ -133,7 +177,7 @@ function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData
   };
 }
 
-function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData: string) {
+function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData: string, priceContext: string) {
   const base64Data = imageData.startsWith("data:") 
     ? imageData.split(",")[1] 
     : imageData;
@@ -162,7 +206,7 @@ function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData:
     contents: [
       {
         parts: [
-          { text: `${systemPrompt}\n\n${userPrompt}\n\nRéponds UNIQUEMENT avec un objet JSON valide suivant ce schéma:\n${jsonSchema}` },
+          { text: `${systemPrompt}\n\n${priceContext}\n\n${userPrompt}\n\nRéponds UNIQUEMENT avec un objet JSON valide suivant ce schéma:\n${jsonSchema}` },
           {
             inline_data: {
               mime_type: "image/jpeg",
@@ -186,7 +230,8 @@ function parseLovableResponse(data: any): HarvestResult | null {
   if (!toolCall?.function?.arguments) {
     return null;
   }
-  return JSON.parse(toolCall.function.arguments);
+  const result = JSON.parse(toolCall.function.arguments);
+  return { ...result, from_database: false };
 }
 
 function parseGeminiResponse(data: any): HarvestResult | null {
@@ -198,7 +243,8 @@ function parseGeminiResponse(data: any): HarvestResult | null {
   if (!jsonMatch) {
     return null;
   }
-  return JSON.parse(jsonMatch[0]);
+  const result = JSON.parse(jsonMatch[0]);
+  return { ...result, from_database: false };
 }
 
 function isRecoverableError(status: number): boolean {
@@ -209,7 +255,8 @@ async function callProvider(
   provider: AIProvider,
   systemPrompt: string,
   userPrompt: string,
-  imageData: string
+  imageData: string,
+  priceContext: string
 ): Promise<{ success: boolean; result?: HarvestResult; error?: string; shouldRetry: boolean }> {
   console.log(`Trying provider: ${provider.name}`);
 
@@ -224,7 +271,7 @@ async function callProvider(
           Authorization: `Bearer ${provider.apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(buildLovableRequest(systemPrompt, userPrompt, imageData)),
+        body: JSON.stringify(buildLovableRequest(systemPrompt, userPrompt, imageData, priceContext)),
       });
 
       if (!response.ok) {
@@ -245,7 +292,7 @@ async function callProvider(
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(buildGeminiRequest(systemPrompt, userPrompt, imageData)),
+        body: JSON.stringify(buildGeminiRequest(systemPrompt, userPrompt, imageData, priceContext)),
       });
 
       if (!response.ok) {
@@ -299,6 +346,18 @@ serve(async (req) => {
       );
     }
 
+    // Initialize Supabase client
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Fetch market prices from database
+    let priceContext = "";
+    if (crop_type) {
+      const prices = await fetchMarketPrices(supabase, crop_type);
+      priceContext = buildPriceContext(prices);
+    }
+
     const providers = getAIProviders();
     if (providers.length === 0) {
       return new Response(
@@ -311,15 +370,17 @@ serve(async (req) => {
 Tu dois analyser l'image de produits agricoles et évaluer:
 1. La qualité visuelle (couleur, taille, uniformité, maturité)
 2. Le pourcentage de défauts
-3. Le grade de qualité (A=Export, B=Marché local, C=Transformation)
+3. Le grade de qualité (A=Export/Premium, B=Marché local qualité standard, C=Transformation/Qualité inférieure)
 4. Les utilisations recommandées
 5. Le prix estimé sur les marchés camerounais
 
 IMPORTANT:
-- Base tes estimations de prix sur les marchés camerounais actuels (Mokolo, Mboppi, Sandaga, etc.)
+- UTILISE EN PRIORITÉ les prix de référence de la base de données locale s'ils sont fournis
+- Base tes estimations de prix sur les marchés camerounais actuels (Mokolo, Mboppi, Sandaga, Marché Central, etc.)
 - Devise: XAF (Franc CFA)
 - Sois réaliste et précis dans tes évaluations
-- Prends en compte la saison actuelle pour les prix`;
+- Prends en compte la saison actuelle pour les prix
+- Ajuste les prix selon le grade de qualité détecté`;
 
     const userPrompt = `Analyse cette image de récolte${crop_type ? ` (produit: ${crop_type})` : ""}.
 Évalue la qualité et donne une estimation de prix pour le marché camerounais.
@@ -332,7 +393,8 @@ Réponds en ${language === "fr" ? "français" : "anglais"}.`;
         provider,
         systemPrompt,
         userPrompt,
-        image
+        image,
+        priceContext
       );
 
       if (success && result) {
@@ -341,6 +403,7 @@ Réponds en ${language === "fr" ? "français" : "anglais"}.`;
             success: true,
             analysis: result,
             analyzed_at: new Date().toISOString(),
+            database_prices_used: !!priceContext,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
