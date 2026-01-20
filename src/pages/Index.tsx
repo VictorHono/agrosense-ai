@@ -3,6 +3,7 @@ import { PageContainer } from '@/components/layout/PageContainer';
 import { FeatureCard } from '@/components/home/FeatureCard';
 import { WeatherWidget } from '@/components/home/WeatherWidget';
 import { AlertBanner } from '@/components/home/AlertBanner';
+import { ActivityStats } from '@/components/home/ActivityStats';
 import { useLanguage } from '@/contexts/LanguageContext';
 import heroBg from '@/assets/hero-bg.jpg';
 
@@ -75,25 +76,9 @@ const Index = () => {
         />
       </div>
 
-      {/* Quick Stats */}
-      <div className="mt-6 p-4 rounded-2xl bg-card border border-border fade-in" style={{ animationDelay: '600ms' }}>
-        <h3 className="text-sm font-semibold text-muted-foreground mb-3">
-          Votre activité récente
-        </h3>
-        <div className="grid grid-cols-3 gap-3 text-center">
-          <div className="p-3 rounded-xl bg-primary/5">
-            <span className="text-2xl font-bold text-primary">0</span>
-            <p className="text-[10px] text-muted-foreground mt-1">Diagnostics</p>
-          </div>
-          <div className="p-3 rounded-xl bg-accent/10">
-            <span className="text-2xl font-bold text-accent-foreground">0</span>
-            <p className="text-[10px] text-muted-foreground mt-1">Analyses</p>
-          </div>
-          <div className="p-3 rounded-xl bg-success/10">
-            <span className="text-2xl font-bold text-success">0</span>
-            <p className="text-[10px] text-muted-foreground mt-1">Conseils lus</p>
-          </div>
-        </div>
+      {/* Activity Stats - Real-time data */}
+      <div className="mt-6">
+        <ActivityStats />
       </div>
     </PageContainer>
   );
