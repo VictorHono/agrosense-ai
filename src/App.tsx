@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import { GeolocationProvider } from "@/contexts/GeolocationContext";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import Index from "./pages/Index";
 import DiagnosePage from "./pages/DiagnosePage";
 import AssistantPage from "./pages/AssistantPage";
@@ -54,14 +55,16 @@ const App = () => (
             <Sonner />
             <BrowserRouter>
               <Routes>
-                {/* Public Routes */}
-                <Route path="/" element={<Index />} />
-                <Route path="/diagnose" element={<DiagnosePage />} />
-                <Route path="/assistant" element={<AssistantPage />} />
-                <Route path="/harvest" element={<HarvestPage />} />
-                <Route path="/settings" element={<SettingsPage />} />
-                <Route path="/tips" element={<TipsPage />} />
+                {/* Auth Route - Public */}
                 <Route path="/auth" element={<AuthPage />} />
+                
+                {/* Protected User Routes */}
+                <Route path="/" element={<RequireAuth><Index /></RequireAuth>} />
+                <Route path="/diagnose" element={<RequireAuth><DiagnosePage /></RequireAuth>} />
+                <Route path="/assistant" element={<RequireAuth><AssistantPage /></RequireAuth>} />
+                <Route path="/harvest" element={<RequireAuth><HarvestPage /></RequireAuth>} />
+                <Route path="/settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
+                <Route path="/tips" element={<RequireAuth><TipsPage /></RequireAuth>} />
                 
                 {/* Protected Admin Routes */}
                 <Route path="/admin" element={
