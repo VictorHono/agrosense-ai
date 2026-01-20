@@ -67,20 +67,34 @@ export default function DiagnosePage() {
     fetchCrops();
   }, []);
 
-  const blobToDataURL = (blob: Blob): Promise<string> =>
+  const blobToBase64 = (blob: Blob): Promise<string> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
+      reader.onloadend = () => {
+        const dataUrl = reader.result as string;
+        const base64 = dataUrl.includes(",") ? dataUrl.split(",")[1] : dataUrl;
+        resolve(base64);
+      };
       reader.onerror = () => reject(new Error('Failed to read image'));
       reader.readAsDataURL(blob);
     });
 
   // Compress image to reduce size for API call (prevents network "Load failed")
+  // NOTE: we keep the *raw* base64 (without "data:image/..." prefix) to minimize payload size.
   const compressImage = useCallback(async (file: File): Promise<string> => {
-    const MAX_DIM = 768;
-    const TARGET_MAX_BYTES = 900 * 1024; // ~900KB
+    let maxDim = 768;
+    const TARGET_MAX_BYTES = 450 * 1024; // keep JSON payload small even after base64 overhead
 
-    const drawToCanvas = async (): Promise<HTMLCanvasElement> => {
+    const encodeJpeg = (canvas: HTMLCanvasElement, quality: number): Promise<Blob> =>
+      new Promise((resolve, reject) => {
+        canvas.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error('Failed to compress image'))),
+          'image/jpeg',
+          quality
+        );
+      });
+
+    const drawToCanvas = async (dim: number): Promise<HTMLCanvasElement> => {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Failed to get canvas context');
@@ -88,16 +102,14 @@ export default function DiagnosePage() {
       // Prefer createImageBitmap (handles more image types and is faster)
       if ('createImageBitmap' in window) {
         const bitmap = await createImageBitmap(file);
-        const scale = Math.min(1, MAX_DIM / Math.max(bitmap.width, bitmap.height));
+        const scale = Math.min(1, dim / Math.max(bitmap.width, bitmap.height));
         const width = Math.max(1, Math.round(bitmap.width * scale));
         const height = Math.max(1, Math.round(bitmap.height * scale));
 
         canvas.width = width;
         canvas.height = height;
         ctx.drawImage(bitmap, 0, 0, width, height);
-        if (typeof (bitmap as any).close === 'function') {
-          (bitmap as any).close();
-        }
+        if (typeof (bitmap as any).close === 'function') (bitmap as any).close();
         return canvas;
       }
 
@@ -114,7 +126,7 @@ export default function DiagnosePage() {
         URL.revokeObjectURL(url);
       }
 
-      const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+      const scale = Math.min(1, dim / Math.max(img.width, img.height));
       const width = Math.max(1, Math.round(img.width * scale));
       const height = Math.max(1, Math.round(img.height * scale));
 
@@ -124,31 +136,43 @@ export default function DiagnosePage() {
       return canvas;
     };
 
-    const canvas = await drawToCanvas();
+    const tryEncodeWithinLimit = async (canvas: HTMLCanvasElement) => {
+      let quality = 0.72;
+      let blob = await encodeJpeg(canvas, quality);
 
-    let quality = 0.72;
-    let blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob(
-        (b) => (b ? resolve(b) : reject(new Error('Failed to compress image'))),
-        'image/jpeg',
-        quality
-      );
-    });
+      // If still too big, progressively reduce quality
+      while (blob.size > TARGET_MAX_BYTES && quality > 0.35) {
+        quality -= 0.07;
+        blob = await encodeJpeg(canvas, quality);
+      }
 
-    // If still too big, progressively reduce quality
-    while (blob.size > TARGET_MAX_BYTES && quality > 0.45) {
-      quality -= 0.08;
-      blob = await new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob(
-          (b) => (b ? resolve(b) : reject(new Error('Failed to compress image'))),
-          'image/jpeg',
-          quality
-        );
-      });
+      return blob;
+    };
+
+    console.log('[diagnose] original file', { type: file.type, bytes: file.size });
+
+    // Pass 1: normal downscale
+    let canvas = await drawToCanvas(maxDim);
+    let blob = await tryEncodeWithinLimit(canvas);
+
+    // Pass 2: if still too big (some devices produce heavy images), reduce dimensions and retry
+    while (blob.size > TARGET_MAX_BYTES && maxDim > 512) {
+      maxDim = Math.floor(maxDim * 0.85);
+      canvas = await drawToCanvas(maxDim);
+      blob = await tryEncodeWithinLimit(canvas);
     }
 
-    return blobToDataURL(blob);
-  }, []);
+    if (blob.size > TARGET_MAX_BYTES) {
+      throw new Error(
+        language === 'fr'
+          ? 'Photo trop lourde. Reprenez une photo plus proche/moins zoomée.'
+          : 'Photo still too large. Please retake with lower detail/closer shot.'
+      );
+    }
+
+    console.log('[diagnose] compressed image', { maxDim, bytes: blob.size });
+    return blobToBase64(blob);
+  }, [language]);
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
