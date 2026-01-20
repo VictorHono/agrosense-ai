@@ -1,7 +1,8 @@
-import { Cloud, Sun, Droplets, Wind, CloudRain, CloudLightning, CloudFog, Loader2 } from 'lucide-react';
+import { Cloud, Sun, Droplets, Wind, CloudRain, CloudLightning, CloudFog, Loader2, MapPin, Navigation } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useGeolocationContext } from '@/contexts/GeolocationContext';
 
 interface WeatherData {
   temp: number;
@@ -13,6 +14,8 @@ interface WeatherData {
   location: string;
   rain_probability: number;
   agricultural_advice: string;
+  altitude?: number;
+  climate_zone?: string;
 }
 
 const iconMap: Record<string, React.ReactNode> = {
@@ -27,6 +30,7 @@ const iconMap: Record<string, React.ReactNode> = {
 
 export function WeatherWidget() {
   const { language } = useLanguage();
+  const { position, loading: geoLoading, error: geoError, locationInfo } = useGeolocationContext();
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -35,8 +39,22 @@ export function WeatherWidget() {
     const fetchWeather = async () => {
       try {
         setLoading(true);
+        
+        const body: Record<string, any> = { language };
+        
+        // Use real GPS coordinates if available
+        if (position) {
+          body.latitude = position.latitude;
+          body.longitude = position.longitude;
+          body.altitude = position.altitude;
+          body.accuracy = position.accuracy;
+        } else {
+          // Fallback to default region
+          body.region = 'centre';
+        }
+
         const { data, error: fetchError } = await supabase.functions.invoke('get-weather', {
-          body: { region: 'centre', language },
+          body,
         });
 
         if (fetchError) throw fetchError;
@@ -47,20 +65,29 @@ export function WeatherWidget() {
         }
       } catch (err) {
         console.error('Weather fetch error:', err);
-        setError('Météo indisponible');
+        setError(language === 'fr' ? 'Météo indisponible' : 'Weather unavailable');
       } finally {
         setLoading(false);
       }
     };
 
-    fetchWeather();
-  }, [language]);
+    // Fetch when position is available or after geo loading finishes
+    if (!geoLoading) {
+      fetchWeather();
+    }
+  }, [language, position, geoLoading]);
 
-  if (loading) {
+  if (loading || geoLoading) {
     return (
       <div className="p-4 rounded-2xl bg-gradient-to-br from-info/20 to-info/5 border border-info/20">
-        <div className="flex items-center justify-center py-4">
-          <Loader2 className="w-6 h-6 text-info animate-spin" />
+        <div className="flex items-center justify-center gap-2 py-4">
+          <Loader2 className="w-5 h-5 text-info animate-spin" />
+          <span className="text-sm text-muted-foreground">
+            {geoLoading 
+              ? (language === 'fr' ? 'Localisation...' : 'Getting location...')
+              : (language === 'fr' ? 'Chargement météo...' : 'Loading weather...')
+            }
+          </span>
         </div>
       </div>
     );
@@ -115,9 +142,22 @@ export function WeatherWidget() {
         {weather.agricultural_advice}
       </p>
       
-      <p className="text-[10px] text-muted-foreground mt-2 text-right">
-        📍 {weather.location}
-      </p>
+      {/* Location with GPS indicator */}
+      <div className="flex items-center justify-between mt-2">
+        <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+          {position ? (
+            <Navigation className="w-3 h-3 text-success" />
+          ) : (
+            <MapPin className="w-3 h-3" />
+          )}
+          <span>{weather.location}</span>
+        </div>
+        {weather.altitude && (
+          <span className="text-[10px] text-muted-foreground">
+            ⛰️ {Math.round(weather.altitude)}m
+          </span>
+        )}
+      </div>
     </div>
   );
 }
