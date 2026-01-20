@@ -1,89 +1,106 @@
-import { BookOpen, Calendar, Leaf, MapPin, ChevronRight } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { BookOpen, Calendar, Leaf, MapPin, ChevronRight, Loader2, RefreshCw } from 'lucide-react';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 interface TipCategory {
   id: string;
   icon: React.ElementType;
   title: string;
   description: string;
-  count: number;
   color: string;
 }
 
 interface Tip {
   id: string;
   title: string;
+  content: string;
   category: string;
   readTime: string;
-  image?: string;
+  crop?: string;
 }
 
 export default function TipsPage() {
   const { language } = useLanguage();
+  const [tips, setTips] = useState<Tip[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedCategory, setSelectedCategory] = useState<string>('seasonal');
+  const [expandedTip, setExpandedTip] = useState<string | null>(null);
 
   const categories: TipCategory[] = [
     { 
       id: 'seasonal', 
       icon: Calendar, 
-      title: language === 'fr' ? 'Conseils saisonniers' : 'Seasonal tips', 
-      description: language === 'fr' ? 'Selon la période' : 'Based on time of year',
-      count: 12,
+      title: language === 'fr' ? 'Saisonniers' : 'Seasonal', 
+      description: language === 'fr' ? 'Selon la période' : 'Based on time',
       color: 'bg-primary/10 text-primary'
     },
     { 
       id: 'crops', 
       icon: Leaf, 
-      title: language === 'fr' ? 'Par culture' : 'By crop', 
-      description: language === 'fr' ? 'Maïs, cacao, manioc...' : 'Corn, cocoa, cassava...',
-      count: 45,
+      title: language === 'fr' ? 'Cultures' : 'Crops', 
+      description: language === 'fr' ? 'Par plante' : 'By plant',
       color: 'bg-success/10 text-success'
     },
     { 
       id: 'regional', 
       icon: MapPin, 
-      title: language === 'fr' ? 'Par région' : 'By region', 
+      title: language === 'fr' ? 'Régional' : 'Regional', 
       description: language === 'fr' ? 'Conseils locaux' : 'Local advice',
-      count: 10,
       color: 'bg-info/10 text-info'
     },
     { 
       id: 'guides', 
       icon: BookOpen, 
-      title: language === 'fr' ? 'Guides pratiques' : 'Practical guides', 
+      title: language === 'fr' ? 'Guides' : 'Guides', 
       description: language === 'fr' ? 'Étape par étape' : 'Step by step',
-      count: 8,
       color: 'bg-accent/20 text-accent-foreground'
     },
   ];
 
-  const recentTips: Tip[] = [
-    { 
-      id: '1', 
-      title: language === 'fr' ? 'Préparation du sol pour la saison des pluies' : 'Soil preparation for rainy season',
-      category: language === 'fr' ? 'Saisonnier' : 'Seasonal',
-      readTime: '5 min'
-    },
-    { 
-      id: '2', 
-      title: language === 'fr' ? 'Comment lutter contre les chenilles légionnaires' : 'How to fight fall armyworms',
-      category: language === 'fr' ? 'Maïs' : 'Corn',
-      readTime: '8 min'
-    },
-    { 
-      id: '3', 
-      title: language === 'fr' ? 'Calendrier de plantation du cacao' : 'Cocoa planting calendar',
-      category: language === 'fr' ? 'Cacao' : 'Cocoa',
-      readTime: '4 min'
-    },
-    { 
-      id: '4', 
-      title: language === 'fr' ? 'Techniques de séchage du manioc' : 'Cassava drying techniques',
-      category: language === 'fr' ? 'Manioc' : 'Cassava',
-      readTime: '6 min'
-    },
-  ];
+  const fetchTips = async (category: string) => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('get-tips', {
+        body: { category, region: 'centre', language },
+      });
+
+      if (error) throw error;
+
+      if (data?.success && data?.tips) {
+        setTips(data.tips);
+      } else {
+        setTips([]);
+      }
+    } catch (err) {
+      console.error('Tips fetch error:', err);
+      toast.error(
+        language === 'fr' 
+          ? 'Erreur lors du chargement des conseils' 
+          : 'Error loading tips'
+      );
+      setTips([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTips(selectedCategory);
+  }, [selectedCategory, language]);
+
+  const handleCategorySelect = (categoryId: string) => {
+    setSelectedCategory(categoryId);
+    setExpandedTip(null);
+  };
+
+  const handleRefresh = () => {
+    fetchTips(selectedCategory);
+  };
 
   return (
     <PageContainer title={language === 'fr' ? 'Conseils agricoles' : 'Farming tips'}>
@@ -93,82 +110,122 @@ export default function TipsPage() {
           <h2 className="text-lg font-bold text-foreground mb-3">
             {language === 'fr' ? 'Catégories' : 'Categories'}
           </h2>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-4 gap-2">
             {categories.map((category) => (
-              <Card 
+              <button 
                 key={category.id}
-                className="p-4 hover:shadow-md transition-shadow cursor-pointer"
+                onClick={() => handleCategorySelect(category.id)}
+                className={`p-3 rounded-xl transition-all ${
+                  selectedCategory === category.id 
+                    ? 'ring-2 ring-primary shadow-md' 
+                    : 'hover:shadow-md'
+                } bg-card border border-border`}
               >
-                <div className={`w-10 h-10 rounded-xl ${category.color} flex items-center justify-center mb-3`}>
-                  <category.icon className="w-5 h-5" />
+                <div className={`w-8 h-8 rounded-lg ${category.color} flex items-center justify-center mx-auto mb-1`}>
+                  <category.icon className="w-4 h-4" />
                 </div>
-                <h3 className="font-semibold text-foreground text-sm">{category.title}</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">{category.description}</p>
-                <p className="text-xs text-primary font-medium mt-2">{category.count} articles</p>
-              </Card>
+                <p className="text-[10px] font-medium text-foreground text-center truncate">
+                  {category.title}
+                </p>
+              </button>
             ))}
           </div>
         </section>
 
-        {/* Recent Tips */}
-        <section>
-          <h2 className="text-lg font-bold text-foreground mb-3">
-            {language === 'fr' ? 'Articles récents' : 'Recent articles'}
+        {/* Refresh Button */}
+        <div className="flex justify-between items-center">
+          <h2 className="text-lg font-bold text-foreground">
+            {language === 'fr' ? 'Conseils du jour' : 'Today\'s tips'}
           </h2>
-          <div className="space-y-3">
-            {recentTips.map((tip) => (
-              <Card 
-                key={tip.id}
-                className="p-4 hover:shadow-md transition-shadow cursor-pointer"
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={handleRefresh}
+            disabled={loading}
+          >
+            <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
+            {language === 'fr' ? 'Actualiser' : 'Refresh'}
+          </Button>
+        </div>
+
+        {/* Tips List */}
+        <section>
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
+              <p className="text-sm text-muted-foreground">
+                {language === 'fr' ? 'Génération des conseils...' : 'Generating tips...'}
+              </p>
+            </div>
+          ) : tips.length === 0 ? (
+            <div className="text-center py-12">
+              <Leaf className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+              <p className="text-muted-foreground">
+                {language === 'fr' ? 'Aucun conseil disponible' : 'No tips available'}
+              </p>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="mt-4"
+                onClick={handleRefresh}
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-16 h-16 rounded-xl bg-muted flex items-center justify-center shrink-0">
-                    <Leaf className="w-6 h-6 text-muted-foreground" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-medium text-foreground text-sm line-clamp-2">
-                      {tip.title}
-                    </h3>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-xs bg-muted px-2 py-0.5 rounded-full text-muted-foreground">
-                        {tip.category}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {tip.readTime} {language === 'fr' ? 'de lecture' : 'read'}
-                      </span>
+                {language === 'fr' ? 'Réessayer' : 'Try again'}
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {tips.map((tip) => (
+                <Card 
+                  key={tip.id}
+                  className="overflow-hidden transition-all cursor-pointer hover:shadow-md"
+                  onClick={() => setExpandedTip(expandedTip === tip.id ? null : tip.id)}
+                >
+                  <div className="p-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                        <Leaf className="w-5 h-5 text-primary" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-medium text-foreground text-sm line-clamp-2">
+                          {tip.title}
+                        </h3>
+                        <div className="flex items-center gap-2 mt-1">
+                          {tip.crop && (
+                            <span className="text-xs bg-muted px-2 py-0.5 rounded-full text-muted-foreground">
+                              {tip.crop}
+                            </span>
+                          )}
+                          <span className="text-xs text-muted-foreground">
+                            {tip.readTime} {language === 'fr' ? 'de lecture' : 'read'}
+                          </span>
+                        </div>
+                      </div>
+                      <ChevronRight className={`w-5 h-5 text-muted-foreground shrink-0 transition-transform ${
+                        expandedTip === tip.id ? 'rotate-90' : ''
+                      }`} />
                     </div>
+                    
+                    {/* Expanded Content */}
+                    {expandedTip === tip.id && (
+                      <div className="mt-4 pt-4 border-t border-border fade-in">
+                        <p className="text-sm text-foreground leading-relaxed">
+                          {tip.content}
+                        </p>
+                      </div>
+                    )}
                   </div>
-                  <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0" />
-                </div>
-              </Card>
-            ))}
-          </div>
+                </Card>
+              ))}
+            </div>
+          )}
         </section>
 
-        {/* Featured Guide */}
-        <section>
-          <Card className="p-5 bg-gradient-to-r from-primary/10 to-primary/5 border-primary/20">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-xs bg-primary/20 text-primary px-2 py-0.5 rounded-full font-medium">
-                {language === 'fr' ? 'Guide vedette' : 'Featured guide'}
-              </span>
-            </div>
-            <h3 className="font-bold text-foreground">
-              {language === 'fr' 
-                ? 'Guide complet : Cultiver le cacao au Cameroun' 
-                : 'Complete guide: Growing cocoa in Cameroon'}
-            </h3>
-            <p className="text-sm text-muted-foreground mt-2">
-              {language === 'fr'
-                ? 'De la plantation à la récolte, tout ce que vous devez savoir pour réussir votre culture de cacao.'
-                : 'From planting to harvest, everything you need to know to succeed in cocoa farming.'}
-            </p>
-            <button className="mt-4 text-sm font-semibold text-primary flex items-center gap-1">
-              {language === 'fr' ? 'Lire le guide' : 'Read the guide'}
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </Card>
-        </section>
+        {/* AI Generated Note */}
+        <p className="text-[10px] text-muted-foreground text-center">
+          🤖 {language === 'fr' 
+            ? 'Conseils générés par intelligence artificielle et adaptés à votre région' 
+            : 'Tips generated by AI and adapted to your region'}
+        </p>
       </div>
     </PageContainer>
   );
