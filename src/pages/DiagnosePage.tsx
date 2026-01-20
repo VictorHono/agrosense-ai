@@ -67,20 +67,73 @@ export default function DiagnosePage() {
     fetchCrops();
   }, []);
 
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  // Compress image to reduce size for API call
+  const compressImage = useCallback((file: File, maxWidth: number = 1024, quality: number = 0.7): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        
+        // Resize if too large
+        if (width > maxWidth) {
+          height = (height * maxWidth) / width;
+          width = maxWidth;
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Failed to get canvas context'));
+          return;
+        }
+        
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // Convert to base64 with compression
+        const base64 = canvas.toDataURL('image/jpeg', quality);
+        resolve(base64);
+      };
+      
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('Failed to load image'));
+      };
+      
+      img.src = url;
+    });
+  }, []);
+
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const url = URL.createObjectURL(file);
       setImageUrl(url);
 
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64 = reader.result as string;
-        setImageBase64(base64);
-      };
-      reader.readAsDataURL(file);
+      try {
+        // Compress image before sending
+        const compressedBase64 = await compressImage(file);
+        setImageBase64(compressedBase64);
+        console.log('Image compressed successfully, size:', Math.round(compressedBase64.length / 1024), 'KB');
+      } catch (error) {
+        console.error('Error compressing image:', error);
+        // Fallback to original image
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64 = reader.result as string;
+          setImageBase64(base64);
+        };
+        reader.readAsDataURL(file);
+      }
     }
-  }, []);
+  }, [compressImage]);
 
   const handleAnalyze = async () => {
     if (!imageBase64) return;
