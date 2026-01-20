@@ -13,6 +13,12 @@ import SettingsPage from "./pages/SettingsPage";
 import TipsPage from "./pages/TipsPage";
 import AdminLayout from "./components/admin/AdminLayout";
 import AdminDashboard from "./pages/admin/AdminDashboard";
+import AdminCropsPage from "./pages/admin/AdminCropsPage";
+import AdminDiseasesPage from "./pages/admin/AdminDiseasesPage";
+import AdminTreatmentsPage from "./pages/admin/AdminTreatmentsPage";
+import AdminAlertsPage from "./pages/admin/AdminAlertsPage";
+import AdminTipsPage from "./pages/admin/AdminTipsPage";
+import AdminMarketPage from "./pages/admin/AdminMarketPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -50,17 +56,12 @@ const App = () => (
             {/* Admin Routes */}
             <Route path="/admin" element={<AdminLayout />}>
               <Route index element={<AdminDashboard />} />
-              <Route path="users" element={<AdminDashboard />} />
-              <Route path="crops" element={<AdminDashboard />} />
-              <Route path="diseases" element={<AdminDashboard />} />
-              <Route path="treatments" element={<AdminDashboard />} />
-              <Route path="ai" element={<AdminDashboard />} />
-              <Route path="languages" element={<AdminDashboard />} />
-              <Route path="notifications" element={<AdminDashboard />} />
-              <Route path="analytics" element={<AdminDashboard />} />
-              <Route path="content" element={<AdminDashboard />} />
-              <Route path="database" element={<AdminDashboard />} />
-              <Route path="settings" element={<AdminDashboard />} />
+              <Route path="crops" element={<AdminCropsPage />} />
+              <Route path="diseases" element={<AdminDiseasesPage />} />
+              <Route path="treatments" element={<AdminTreatmentsPage />} />
+              <Route path="notifications" element={<AdminAlertsPage />} />
+              <Route path="content" element={<AdminTipsPage />} />
+              <Route path="analytics" element={<AdminMarketPage />} />
             </Route>
             
             {/* Catch all */}
