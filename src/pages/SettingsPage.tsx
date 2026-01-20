@@ -1,31 +1,21 @@
-import { Globe, MapPin, Bell, Volume2, Smartphone, ChevronRight, LogOut, User, Shield } from 'lucide-react';
+import { Globe, MapPin, Bell, Volume2, Smartphone, ChevronRight, LogOut, Shield, Navigation } from 'lucide-react';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { Region } from '@/types';
-
-const REGIONS: { value: Region; label: string }[] = [
-  { value: 'adamaoua', label: 'Adamaoua' },
-  { value: 'centre', label: 'Centre' },
-  { value: 'est', label: 'Est' },
-  { value: 'extreme-nord', label: 'Extrême-Nord' },
-  { value: 'littoral', label: 'Littoral' },
-  { value: 'nord', label: 'Nord' },
-  { value: 'nord-ouest', label: 'Nord-Ouest' },
-  { value: 'ouest', label: 'Ouest' },
-  { value: 'sud', label: 'Sud' },
-  { value: 'sud-ouest', label: 'Sud-Ouest' },
-];
+import { LocationSettings } from '@/components/settings/LocationSettings';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { useGeolocationContext } from '@/contexts/GeolocationContext';
 
 export default function SettingsPage() {
   const { t, language, setLanguage } = useLanguage();
   const [notifications, setNotifications] = useState(true);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [dataSaver, setDataSaver] = useState(false);
-  const [selectedRegion, setSelectedRegion] = useState<Region>('centre');
+  const [locationOpen, setLocationOpen] = useState(false);
+  const { positionSource, locationInfo } = useGeolocationContext();
 
   const SettingRow = ({ 
     icon: Icon, 
@@ -97,19 +87,33 @@ export default function SettingsPage() {
             </div>
           </SettingRow>
 
-          <SettingRow icon={MapPin} label={t('settings.region')}>
-            <select
-              value={selectedRegion}
-              onChange={(e) => setSelectedRegion(e.target.value as Region)}
-              className="bg-muted border-0 rounded-lg px-3 py-2 text-sm font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-            >
-              {REGIONS.map((region) => (
-                <option key={region.value} value={region.value}>
-                  {region.label}
-                </option>
-              ))}
-            </select>
-          </SettingRow>
+          {/* Location Settings - Collapsible */}
+          <Collapsible open={locationOpen} onOpenChange={setLocationOpen}>
+            <CollapsibleTrigger asChild>
+              <div className="flex items-center justify-between py-4 border-b border-border cursor-pointer hover:bg-muted/50 -mx-4 px-4 transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-muted flex items-center justify-center">
+                    <Navigation className="w-4 h-4 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <span className="font-medium text-foreground">
+                      {language === 'fr' ? 'Localisation' : 'Location'}
+                    </span>
+                    <p className="text-xs text-muted-foreground">
+                      {locationInfo?.regionName || (positionSource === 'none' 
+                        ? (language === 'fr' ? 'Non configuré' : 'Not configured')
+                        : (language === 'fr' ? 'Configuré' : 'Configured')
+                      )}
+                    </p>
+                  </div>
+                </div>
+                <ChevronRight className={`w-5 h-5 text-muted-foreground transition-transform ${locationOpen ? 'rotate-90' : ''}`} />
+              </div>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="py-4 border-b border-border">
+              <LocationSettings />
+            </CollapsibleContent>
+          </Collapsible>
 
           <SettingRow icon={Bell} label={t('settings.notifications')}>
             <Switch
