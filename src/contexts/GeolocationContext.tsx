@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useMemo, useEffect } from 'react';
-import { 
-  useGeolocation, 
-  GeolocationPosition, 
+import {
+  useGeolocation,
+  GeolocationPosition,
   GeolocationError,
+  PositionSource,
   getCameroonRegionFromCoords,
   getClimateZone,
 } from '@/hooks/useGeolocation';
@@ -28,7 +29,17 @@ interface GeolocationContextType {
   refresh: () => void;
   startWatching: () => void;
   stopWatching: () => void;
+
+  /** True if browser location permission is not currently denied OR we have a usable fallback position */
   hasPermission: boolean;
+  /** True if the browser explicitly denied geolocation permission */
+  permissionDenied: boolean;
+  /** Where the position comes from */
+  positionSource: PositionSource;
+
+  /** Manual fallback (persists in localStorage) */
+  setManualLocation: (manual: Pick<GeolocationPosition, 'latitude' | 'longitude'> & { altitude?: number | null }) => void;
+  clearManualLocation: () => void;
 }
 
 const GeolocationContext = createContext<GeolocationContextType | undefined>(undefined);
@@ -44,14 +55,17 @@ export function GeolocationProvider({ children }: { children: React.ReactNode })
   // Log geolocation state changes for debugging
   useEffect(() => {
     console.log('[GeolocationContext] State update:', {
+      source: geo.source,
       hasPosition: !!geo.position,
       loading: geo.loading,
       error: geo.error?.message,
-      coords: geo.position ? {
-        lat: geo.position.latitude,
-        lon: geo.position.longitude,
-        alt: geo.position.altitude,
-      } : null,
+      coords: geo.position
+        ? {
+            lat: geo.position.latitude,
+            lon: geo.position.longitude,
+            alt: geo.position.altitude,
+          }
+        : null,
     });
   }, [geo.position, geo.loading, geo.error]);
 
@@ -75,7 +89,9 @@ export function GeolocationProvider({ children }: { children: React.ReactNode })
     };
   }, [geo.position]);
 
-  const hasPermission = !geo.error || geo.error.code !== 1; // 1 = PERMISSION_DENIED
+  const permissionDenied = geo.error?.code === 1; // 1 = PERMISSION_DENIED
+  // If permission is denied but we have a cached/manual position, we still consider it usable.
+  const hasPermission = !permissionDenied || !!geo.position;
 
   const value: GeolocationContextType = {
     position: geo.position,
@@ -87,6 +103,10 @@ export function GeolocationProvider({ children }: { children: React.ReactNode })
     startWatching: geo.startWatching,
     stopWatching: geo.stopWatching,
     hasPermission,
+    permissionDenied,
+    positionSource: geo.source,
+    setManualLocation: geo.setManualLocation,
+    clearManualLocation: geo.clearManualLocation,
   };
 
   return (

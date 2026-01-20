@@ -4,6 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useGeolocationContext } from '@/contexts/GeolocationContext';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface WeatherData {
   temp: number;
@@ -29,9 +30,34 @@ const iconMap: Record<string, React.ReactNode> = {
   'cloud-fog': <CloudFog className="w-6 h-6 text-muted-foreground" />,
 };
 
+const MANUAL_LOCATIONS = [
+  { id: 'douala', label: 'Douala (Littoral)', lat: 4.0503, lon: 9.7 },
+  { id: 'yaounde', label: 'Yaoundé (Centre)', lat: 3.8667, lon: 11.5167 },
+  { id: 'bafoussam', label: 'Bafoussam (Ouest)', lat: 5.4833, lon: 10.4167 },
+  { id: 'bamenda', label: 'Bamenda (Nord-Ouest)', lat: 5.95, lon: 10.15 },
+  { id: 'buea', label: 'Buéa (Sud-Ouest)', lat: 4.15, lon: 9.2333 },
+  { id: 'ebolowa', label: 'Ebolowa (Sud)', lat: 2.9333, lon: 11.15 },
+  { id: 'bertoua', label: 'Bertoua (Est)', lat: 4.5833, lon: 13.6833 },
+  { id: 'ngaoundere', label: 'Ngaoundéré (Adamaoua)', lat: 7.3167, lon: 13.5833 },
+  { id: 'garoua', label: 'Garoua (Nord)', lat: 9.3, lon: 13.3833 },
+  { id: 'maroua', label: 'Maroua (Extrême-Nord)', lat: 10.5917, lon: 14.3167 },
+] as const;
+
 export function WeatherWidget() {
   const { language } = useLanguage();
-  const { position, loading: geoLoading, error: geoError, locationInfo, refresh: refreshGeo, hasPermission } = useGeolocationContext();
+  const {
+    position,
+    loading: geoLoading,
+    error: geoError,
+    locationInfo,
+    refresh: refreshGeo,
+    hasPermission,
+    permissionDenied,
+    positionSource,
+    setManualLocation,
+    clearManualLocation,
+    startWatching,
+  } = useGeolocationContext();
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -98,8 +124,22 @@ export function WeatherWidget() {
     }
   }, [position, geoLoading, fetchWeather]);
 
-  // Show permission error state
-  if (!hasPermission && !geoLoading) {
+  const handleManualLocation = useCallback((id: string) => {
+    const loc = MANUAL_LOCATIONS.find(l => l.id === id);
+    if (!loc) return;
+    setManualLocation({ latitude: loc.lat, longitude: loc.lon });
+  }, [setManualLocation]);
+
+  const retryGps = useCallback(() => {
+    // If user was in manual mode, let them switch back to GPS.
+    clearManualLocation();
+    // Try both single-shot and watch, because different browsers behave differently.
+    startWatching();
+    refreshGeo();
+  }, [clearManualLocation, startWatching, refreshGeo]);
+
+  // Permission denied (or unsupported) AND no position => offer manual fallback
+  if ((!hasPermission || permissionDenied || geoError?.code === 0) && !position && !geoLoading) {
     return (
       <div className="p-4 rounded-2xl bg-gradient-to-br from-warning/20 to-warning/5 border border-warning/20">
         <div className="flex items-start gap-3">
@@ -109,19 +149,45 @@ export function WeatherWidget() {
               {language === 'fr' ? 'Localisation requise' : 'Location required'}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              {language === 'fr' 
-                ? 'Autorisez l\'accès à votre position pour des conseils agricoles personnalisés à votre zone.' 
-                : 'Allow location access for agricultural advice personalized to your area.'}
+              {geoError?.message || (language === 'fr'
+                ? 'Autorisez l\'accès à votre position pour des conseils agricoles personnalisés à votre zone.'
+                : 'Allow location access for agricultural advice personalized to your area.')}
             </p>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              className="mt-3"
-              onClick={refreshGeo}
-            >
-              <RefreshCw className="w-3 h-3 mr-2" />
-              {language === 'fr' ? 'Réessayer' : 'Retry'}
-            </Button>
+
+            <div className="mt-3 space-y-2">
+              <Button variant="outline" size="sm" onClick={retryGps}>
+                <RefreshCw className="w-3 h-3 mr-2" />
+                {language === 'fr' ? 'Réessayer GPS' : 'Retry GPS'}
+              </Button>
+
+              <div className="pt-1">
+                <p className="text-[11px] text-muted-foreground">
+                  {language === 'fr'
+                    ? 'Si le navigateur bloque le GPS, choisissez une ville (persistant sur cet appareil) :'
+                    : 'If GPS is blocked, choose a city (saved on this device):'}
+                </p>
+                <Select onValueChange={handleManualLocation}>
+                  <SelectTrigger className="mt-2">
+                    <SelectValue placeholder={language === 'fr' ? 'Choisir une ville…' : 'Choose a city…'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MANUAL_LOCATIONS.map(loc => (
+                      <SelectItem key={loc.id} value={loc.id}>
+                        {loc.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {permissionDenied && (
+                <p className="text-[11px] text-muted-foreground">
+                  {language === 'fr'
+                    ? 'Astuce Chrome: cliquez sur 🔒 à gauche de l\'URL → "Localisation" → Autoriser, puis rechargez.'
+                    : 'Chrome tip: click 🔒 next to the URL → "Location" → Allow, then reload.'}
+                </p>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -226,7 +292,7 @@ export function WeatherWidget() {
       {/* Location with GPS indicator */}
       <div className="flex items-center justify-between mt-2">
         <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-          {position ? (
+          {position && positionSource === 'gps' ? (
             <Navigation className="w-3 h-3 text-success" />
           ) : (
             <MapPin className="w-3 h-3" />
@@ -236,6 +302,12 @@ export function WeatherWidget() {
             <span className="text-muted-foreground/60">
               (~{locationInfo.distanceToCity}km)
             </span>
+          )}
+          {positionSource === 'cache' && (
+            <span className="text-muted-foreground/60">• {language === 'fr' ? 'cache' : 'cached'}</span>
+          )}
+          {positionSource === 'manual' && (
+            <span className="text-muted-foreground/60">• {language === 'fr' ? 'manuel' : 'manual'}</span>
           )}
         </div>
         <div className="flex items-center gap-2">

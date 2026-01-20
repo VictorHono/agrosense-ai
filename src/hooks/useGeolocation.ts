@@ -11,11 +11,14 @@ export interface GeolocationPosition {
   timestamp: number;
 }
 
+export type PositionSource = 'gps' | 'cache' | 'manual' | 'none';
+
 export interface GeolocationState {
   position: GeolocationPosition | null;
   error: GeolocationError | null;
   loading: boolean;
   isWatching: boolean;
+  source: PositionSource;
 }
 
 export interface GeolocationError {
@@ -38,6 +41,7 @@ const defaultOptions: UseGeolocationOptions = {
 };
 
 const CACHE_KEY = 'agrocamer-last-position';
+const MANUAL_KEY = 'agrocamer-manual-location';
 
 export function useGeolocation(options: UseGeolocationOptions = {}) {
   const { enableHighAccuracy, timeout, maximumAge, watchPosition } = {
@@ -46,7 +50,29 @@ export function useGeolocation(options: UseGeolocationOptions = {}) {
   };
 
   const [state, setState] = useState<GeolocationState>(() => {
-    // Initialize with cached position if available
+    // 1) Manual location override (works even if GPS is blocked / unsupported)
+    const manual = localStorage.getItem(MANUAL_KEY);
+    if (manual) {
+      try {
+        const manualPos = JSON.parse(manual);
+        return {
+          position: {
+            ...manualPos,
+            altitudeAccuracy: null,
+            heading: null,
+            speed: null,
+          },
+          error: null,
+          loading: false,
+          isWatching: false,
+          source: 'manual',
+        };
+      } catch {
+        // Invalid manual cache, ignore
+      }
+    }
+
+    // 2) Cached GPS position (last known)
     const cached = localStorage.getItem(CACHE_KEY);
     if (cached) {
       try {
@@ -61,16 +87,19 @@ export function useGeolocation(options: UseGeolocationOptions = {}) {
           error: null,
           loading: true, // Still loading to get fresh position
           isWatching: false,
+          source: 'cache',
         };
       } catch {
         // Invalid cache, ignore
       }
     }
+
     return {
       position: null,
       error: null,
       loading: true,
       isWatching: false,
+      source: 'none',
     };
   });
 
@@ -105,6 +134,7 @@ export function useGeolocation(options: UseGeolocationOptions = {}) {
       error: null,
       loading: false,
       isWatching: watchPosition ?? true,
+      source: 'gps',
     });
 
     // Store in localStorage for offline use
@@ -157,6 +187,7 @@ export function useGeolocation(options: UseGeolocationOptions = {}) {
           error: { code: error.code, message: `${message} (position en cache utilisée)` },
           loading: false,
           isWatching: false,
+          source: 'cache',
         });
         return;
       } catch {
@@ -169,6 +200,7 @@ export function useGeolocation(options: UseGeolocationOptions = {}) {
       error: { code: error.code, message },
       loading: false,
       isWatching: false,
+      source: 'none',
     });
   }, []);
 
@@ -179,12 +211,15 @@ export function useGeolocation(options: UseGeolocationOptions = {}) {
         ...prev,
         error: { code: 0, message: 'Géolocalisation non supportée par votre navigateur' },
         loading: false,
+        isWatching: false,
+        source: prev.source ?? 'none',
       }));
       return;
     }
 
     console.log('[Geolocation] Requesting current position...');
-    setState(prev => ({ ...prev, loading: true }));
+    // Keep any existing position (cache/manual) while we try to refresh
+    setState(prev => ({ ...prev, loading: true, error: null }));
 
     navigator.geolocation.getCurrentPosition(
       handleSuccess,
@@ -200,6 +235,7 @@ export function useGeolocation(options: UseGeolocationOptions = {}) {
         ...prev,
         error: { code: 0, message: 'Géolocalisation non supportée par votre navigateur' },
         loading: false,
+        isWatching: false,
       }));
       return;
     }
@@ -211,7 +247,8 @@ export function useGeolocation(options: UseGeolocationOptions = {}) {
     }
 
     console.log('[Geolocation] Starting position watch...');
-    setState(prev => ({ ...prev, loading: true }));
+    // Keep any existing position (cache/manual) while we try to refresh
+    setState(prev => ({ ...prev, loading: true, error: null }));
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       handleSuccess,
@@ -232,6 +269,21 @@ export function useGeolocation(options: UseGeolocationOptions = {}) {
   useEffect(() => {
     mountedRef.current = true;
 
+    // If user set a manual location, we don't spam GPS requests (important for browsers where
+    // the permission was blocked and Retry would never prompt again).
+    const manual = localStorage.getItem(MANUAL_KEY);
+    if (manual) {
+      console.log('[Geolocation] Manual location present, skipping GPS init');
+      setState(prev => ({ ...prev, loading: false, isWatching: false, source: 'manual' }));
+      return () => {
+        mountedRef.current = false;
+        if (watchIdRef.current !== null) {
+          navigator.geolocation.clearWatch(watchIdRef.current);
+          watchIdRef.current = null;
+        }
+      };
+    }
+
     // Start watching or get current position
     if (watchPosition) {
       startWatching();
@@ -250,11 +302,59 @@ export function useGeolocation(options: UseGeolocationOptions = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const setManualLocation = useCallback((manual: Pick<GeolocationPosition, 'latitude' | 'longitude'> & { altitude?: number | null }) => {
+    // Stop any watch
+    if (watchIdRef.current !== null && navigator.geolocation) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+
+    const now = Date.now();
+    const manualPosition: GeolocationPosition = {
+      latitude: manual.latitude,
+      longitude: manual.longitude,
+      altitude: manual.altitude ?? null,
+      accuracy: 5000,
+      altitudeAccuracy: null,
+      heading: null,
+      speed: null,
+      timestamp: now,
+    };
+
+    try {
+      localStorage.setItem(MANUAL_KEY, JSON.stringify(manualPosition));
+    } catch (e) {
+      console.warn('[Geolocation] Failed to cache manual location:', e);
+    }
+
+    setState({
+      position: manualPosition,
+      error: null,
+      loading: false,
+      isWatching: false,
+      source: 'manual',
+    });
+  }, []);
+
+  const clearManualLocation = useCallback(() => {
+    try {
+      localStorage.removeItem(MANUAL_KEY);
+    } catch {
+      // ignore
+    }
+
+    // After clearing manual mode, try GPS again
+    if (watchPosition) startWatching();
+    else getCurrentPosition();
+  }, [watchPosition, startWatching, getCurrentPosition]);
+
   return {
     ...state,
     refresh: getCurrentPosition,
     startWatching,
     stopWatching,
+    setManualLocation,
+    clearManualLocation,
   };
 }
 
