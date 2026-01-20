@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { cn } from '@/lib/utils';
 import { CROP_LABELS, type Crop, type HarvestResult } from '@/types';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 type AnalysisStep = 'capture' | 'analyzing' | 'result';
 
@@ -12,6 +14,7 @@ export default function HarvestPage() {
   const { t, language } = useLanguage();
   const [step, setStep] = useState<AnalysisStep>('capture');
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [selectedCrop, setSelectedCrop] = useState<Crop | null>(null);
   const [result, setResult] = useState<HarvestResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -22,48 +25,54 @@ export default function HarvestPage() {
     if (file) {
       const url = URL.createObjectURL(file);
       setImageUrl(url);
+
+      // Convert to base64 for API
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = reader.result as string;
+        setImageBase64(base64);
+      };
+      reader.readAsDataURL(file);
     }
   }, []);
 
   const handleAnalyze = async () => {
-    if (!imageUrl || !selectedCrop) return;
+    if (!imageBase64 || !selectedCrop) return;
     
     setStep('analyzing');
     
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 2500));
-    
-    // Mock result
-    setResult({
-      grade: 'B',
-      quality: {
-        color: 85,
-        size: 78,
-        defects: 12,
-        uniformity: 82,
-        maturity: 90,
-      },
-      recommendedUse: [
-        'Vente au marché local',
-        'Transformation en farine',
-        'Stockage pour consommation'
-      ],
-      estimatedPrice: {
-        min: 450,
-        max: 550,
-        currency: 'XAF',
-        unit: 'kg',
-        market: 'Marché de Mokolo, Yaoundé'
-      },
-      feedback: 'Bonne qualité générale. Quelques défauts mineurs détectés (environ 12%). Recommandé pour le marché local ou la transformation. La maturité est optimale pour la récolte.'
-    });
-    
-    setStep('result');
+    try {
+      const { data, error } = await supabase.functions.invoke('analyze-harvest', {
+        body: {
+          image: imageBase64,
+          crop_type: CROP_LABELS[selectedCrop][language],
+          language,
+        },
+      });
+
+      if (error) throw error;
+
+      if (data?.success && data?.analysis) {
+        setResult(data.analysis);
+        setStep('result');
+      } else {
+        throw new Error(data?.error || 'Résultat inattendu');
+      }
+    } catch (error) {
+      console.error('Analysis error:', error);
+      toast.error(
+        language === 'fr' 
+          ? 'Erreur lors de l\'analyse. Veuillez réessayer.' 
+          : 'Analysis error. Please try again.'
+      );
+      setStep('capture');
+    }
   };
 
   const resetAnalysis = () => {
     setStep('capture');
     setImageUrl(null);
+    setImageBase64(null);
     setSelectedCrop(null);
     setResult(null);
   };
@@ -131,16 +140,19 @@ export default function HarvestPage() {
                   variant="secondary"
                   size="sm"
                   className="absolute top-3 right-3"
-                  onClick={() => setImageUrl(null)}
+                  onClick={() => {
+                    setImageUrl(null);
+                    setImageBase64(null);
+                  }}
                 >
-                  Changer
+                  {language === 'fr' ? 'Changer' : 'Change'}
                 </Button>
               </div>
 
               {/* Crop Selection */}
               <div>
                 <label className="text-sm font-medium text-foreground mb-2 block">
-                  Quel produit analysez-vous ?
+                  {language === 'fr' ? 'Quel produit analysez-vous ?' : 'What product are you analyzing?'}
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {popularCrops.map((crop) => (
@@ -169,7 +181,7 @@ export default function HarvestPage() {
                 disabled={!selectedCrop}
               >
                 <TrendingUp className="w-5 h-5 mr-2" />
-                Analyser la qualité
+                {language === 'fr' ? 'Analyser la qualité' : 'Analyze quality'}
               </Button>
             </div>
           ) : (
@@ -182,12 +194,12 @@ export default function HarvestPage() {
                   </div>
                   <div>
                     <h3 className="font-semibold text-foreground text-sm">
-                      Conseils pour une bonne analyse
+                      {language === 'fr' ? 'Conseils pour une bonne analyse' : 'Tips for good analysis'}
                     </h3>
                     <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-                      <li>• Photographiez plusieurs produits ensemble</li>
-                      <li>• Utilisez un fond uni et clair</li>
-                      <li>• Montrez les produits de face</li>
+                      <li>• {language === 'fr' ? 'Photographiez plusieurs produits ensemble' : 'Photograph multiple products together'}</li>
+                      <li>• {language === 'fr' ? 'Utilisez un fond uni et clair' : 'Use a plain, light background'}</li>
+                      <li>• {language === 'fr' ? 'Montrez les produits de face' : 'Show products from the front'}</li>
                     </ul>
                   </div>
                 </div>
@@ -202,7 +214,7 @@ export default function HarvestPage() {
                   onClick={() => cameraInputRef.current?.click()}
                 >
                   <Camera className="w-8 h-8" />
-                  <span>Prendre une photo</span>
+                  <span>{language === 'fr' ? 'Prendre une photo' : 'Take a photo'}</span>
                 </Button>
                 <Button
                   variant="outline"
@@ -211,7 +223,7 @@ export default function HarvestPage() {
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <Upload className="w-8 h-8" />
-                  <span>Importer une image</span>
+                  <span>{language === 'fr' ? 'Importer une image' : 'Upload image'}</span>
                 </Button>
               </div>
 
@@ -248,9 +260,11 @@ export default function HarvestPage() {
             <div className="absolute inset-0 bg-accent/20 rounded-2xl animate-pulse" />
           </div>
           <Loader2 className="w-8 h-8 text-accent animate-spin mb-4" />
-          <p className="text-lg font-semibold text-foreground">Analyse en cours...</p>
+          <p className="text-lg font-semibold text-foreground">
+            {language === 'fr' ? 'Analyse en cours...' : 'Analyzing...'}
+          </p>
           <p className="text-sm text-muted-foreground mt-1">
-            Évaluation de la qualité de votre récolte
+            {language === 'fr' ? 'Évaluation de la qualité de votre récolte' : 'Evaluating your harvest quality'}
           </p>
         </div>
       )}
@@ -289,14 +303,16 @@ export default function HarvestPage() {
 
           {/* Quality Metrics */}
           <div className="p-4 rounded-xl bg-card border border-border space-y-4">
-            <h3 className="font-semibold text-foreground">Critères de qualité</h3>
-            <QualityBar label="Couleur" value={result.quality.color} />
-            <QualityBar label="Taille" value={result.quality.size} />
-            <QualityBar label="Uniformité" value={result.quality.uniformity} />
-            <QualityBar label="Maturité" value={result.quality.maturity} />
+            <h3 className="font-semibold text-foreground">
+              {language === 'fr' ? 'Critères de qualité' : 'Quality criteria'}
+            </h3>
+            <QualityBar label={language === 'fr' ? 'Couleur' : 'Color'} value={result.quality.color} />
+            <QualityBar label={language === 'fr' ? 'Taille' : 'Size'} value={result.quality.size} />
+            <QualityBar label={language === 'fr' ? 'Uniformité' : 'Uniformity'} value={result.quality.uniformity} />
+            <QualityBar label={language === 'fr' ? 'Maturité' : 'Maturity'} value={result.quality.maturity} />
             <div className="space-y-1">
               <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">Défauts</span>
+                <span className="text-muted-foreground">{language === 'fr' ? 'Défauts' : 'Defects'}</span>
                 <span className="font-medium text-foreground">{result.quality.defects}%</span>
               </div>
               <div className="h-2 bg-muted rounded-full overflow-hidden">
@@ -363,7 +379,7 @@ export default function HarvestPage() {
             size="lg"
             onClick={resetAnalysis}
           >
-            Nouvelle analyse
+            {language === 'fr' ? 'Nouvelle analyse' : 'New analysis'}
           </Button>
         </div>
       )}

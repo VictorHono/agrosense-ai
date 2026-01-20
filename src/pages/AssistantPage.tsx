@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { cn } from '@/lib/utils';
 import { ChatMessage } from '@/types';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 export default function AssistantPage() {
   const { t, language } = useLanguage();
@@ -13,8 +15,8 @@ export default function AssistantPage() {
       id: '1',
       role: 'assistant',
       content: language === 'fr' 
-        ? 'Bonjour ! Je suis votre assistant agricole. Comment puis-je vous aider aujourd\'hui ? Vous pouvez me poser des questions sur vos cultures, les maladies, les traitements, ou demander des conseils.' 
-        : 'Hello! I am your farming assistant. How can I help you today? You can ask me about your crops, diseases, treatments, or ask for advice.',
+        ? 'Bonjour ! Je suis votre assistant agricole AgroCamer. Comment puis-je vous aider aujourd\'hui ? Posez-moi des questions sur vos cultures, les maladies, les traitements, ou demandez des conseils.' 
+        : 'Hello! I am your AgroCamer farming assistant. How can I help you today? Ask me about your crops, diseases, treatments, or ask for advice.',
       timestamp: new Date(),
     }
   ]);
@@ -43,58 +45,129 @@ export default function AssistantPage() {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    const currentInput = inputText.trim();
     setInputText('');
     setIsLoading(true);
 
-    // Simulate AI response
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    try {
+      // Prepare conversation history for the API
+      const conversationHistory = messages
+        .filter(m => m.id !== '1') // Skip initial greeting
+        .map(m => ({
+          role: m.role,
+          content: m.content,
+        }));
+      
+      conversationHistory.push({ role: 'user', content: currentInput });
 
-    const responses: Record<string, string> = {
-      default: language === 'fr' 
-        ? 'Je comprends votre question. Laissez-moi vous aider avec cela. Pour les cultures au Cameroun, il est important de tenir compte de la saison et de votre région spécifique. Pourriez-vous me donner plus de détails sur votre situation ?'
-        : 'I understand your question. Let me help you with that. For crops in Cameroon, it\'s important to consider the season and your specific region. Could you give me more details about your situation?',
-    };
+      const { data, error } = await supabase.functions.invoke('chat-assistant', {
+        body: {
+          messages: conversationHistory,
+          language,
+          region: 'centre', // Could be dynamic based on user settings
+        },
+      });
 
-    const assistantMessage: ChatMessage = {
-      id: (Date.now() + 1).toString(),
-      role: 'assistant',
-      content: responses.default,
-      timestamp: new Date(),
-    };
+      if (error) throw error;
 
-    setMessages(prev => [...prev, assistantMessage]);
-    setIsLoading(false);
+      if (data?.success && data?.message) {
+        const assistantMessage: ChatMessage = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: data.message,
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, assistantMessage]);
+      } else {
+        throw new Error('Réponse invalide du serveur');
+      }
+    } catch (error) {
+      console.error('Chat error:', error);
+      toast.error(
+        language === 'fr' 
+          ? 'Erreur de connexion. Veuillez réessayer.' 
+          : 'Connection error. Please try again.'
+      );
+      
+      // Add error message
+      const errorMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: language === 'fr' 
+          ? 'Désolé, je rencontre des difficultés techniques. Veuillez réessayer dans quelques instants.'
+          : 'Sorry, I\'m experiencing technical difficulties. Please try again in a moment.',
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const toggleListening = useCallback(() => {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      alert(language === 'fr' 
-        ? 'La reconnaissance vocale n\'est pas supportée par votre navigateur.' 
-        : 'Speech recognition is not supported by your browser.');
+      toast.error(
+        language === 'fr' 
+          ? 'La reconnaissance vocale n\'est pas supportée par votre navigateur.' 
+          : 'Speech recognition is not supported by your browser.'
+      );
       return;
     }
 
     setIsListening(prev => !prev);
     
-    // Here you would implement actual speech recognition
     if (!isListening) {
-      // Start listening simulation
-      setTimeout(() => {
-        setInputText(language === 'fr' 
-          ? 'Quand dois-je planter le maïs ?' 
-          : 'When should I plant corn?');
+      try {
+        const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+        const recognition = new SpeechRecognition();
+        recognition.lang = language === 'fr' ? 'fr-FR' : 'en-US';
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        recognition.onresult = (event: any) => {
+          const transcript = event.results[0][0].transcript;
+          setInputText(transcript);
+          setIsListening(false);
+        };
+
+        recognition.onerror = () => {
+          setIsListening(false);
+          toast.error(
+            language === 'fr' 
+              ? 'Erreur de reconnaissance vocale' 
+              : 'Speech recognition error'
+          );
+        };
+
+        recognition.onend = () => {
+          setIsListening(false);
+        };
+
+        recognition.start();
+      } catch (error) {
         setIsListening(false);
-      }, 2000);
+        toast.error(
+          language === 'fr' 
+            ? 'Erreur de reconnaissance vocale' 
+            : 'Speech recognition error'
+        );
+      }
     }
   }, [isListening, language]);
 
   const speakMessage = (text: string) => {
     if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = language === 'fr' ? 'fr-FR' : 'en-US';
+      utterance.rate = 0.9;
       speechSynthesis.speak(utterance);
     }
   };
+
+  const quickSuggestions = language === 'fr' 
+    ? ['Quand planter le maïs ?', 'Maladies du cacao', 'Prix du marché']
+    : ['When to plant corn?', 'Cocoa diseases', 'Market prices'];
 
   return (
     <PageContainer 
@@ -129,14 +202,14 @@ export default function AssistantPage() {
                 ? "bg-primary text-primary-foreground rounded-tr-sm"
                 : "bg-card border border-border rounded-tl-sm"
             )}>
-              <p className="text-sm leading-relaxed">{message.content}</p>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
               {message.role === 'assistant' && audioEnabled && (
                 <button
                   onClick={() => speakMessage(message.content)}
                   className="mt-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <Volume2 className="w-3 h-3" />
-                  Écouter
+                  {language === 'fr' ? 'Écouter' : 'Listen'}
                 </button>
               )}
             </div>
@@ -166,11 +239,7 @@ export default function AssistantPage() {
       <div className="border-t border-border bg-card p-4 safe-bottom">
         {/* Quick suggestions */}
         <div className="flex gap-2 overflow-x-auto pb-3 scrollbar-hide">
-          {[
-            language === 'fr' ? 'Quand planter ?' : 'When to plant?',
-            language === 'fr' ? 'Maladies du cacao' : 'Cocoa diseases',
-            language === 'fr' ? 'Prix du maïs' : 'Corn prices',
-          ].map((suggestion) => (
+          {quickSuggestions.map((suggestion) => (
             <button
               key={suggestion}
               onClick={() => setInputText(suggestion)}
@@ -198,9 +267,10 @@ export default function AssistantPage() {
               type="text"
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
               placeholder={t('assistant.placeholder')}
               className="w-full h-11 px-4 pr-12 rounded-xl bg-muted border-0 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+              disabled={isLoading}
             />
             {inputText && (
               <Button
@@ -228,6 +298,7 @@ export default function AssistantPage() {
               "shrink-0 transition-all",
               isListening && "pulse-mic"
             )}
+            disabled={isLoading}
           >
             {isListening ? (
               <MicOff className="w-6 h-6" />
