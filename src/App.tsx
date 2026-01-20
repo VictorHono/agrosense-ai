@@ -5,13 +5,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import { GeolocationProvider } from "@/contexts/GeolocationContext";
+import { AuthProvider } from "@/contexts/AuthContext";
 import Index from "./pages/Index";
 import DiagnosePage from "./pages/DiagnosePage";
 import AssistantPage from "./pages/AssistantPage";
 import HarvestPage from "./pages/HarvestPage";
 import SettingsPage from "./pages/SettingsPage";
 import TipsPage from "./pages/TipsPage";
+import AuthPage from "./pages/AuthPage";
 import AdminLayout from "./components/admin/AdminLayout";
+import RequireAdmin from "./components/admin/RequireAdmin";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import AdminUsersPage from "./pages/admin/AdminUsersPage";
 import AdminCropsPage from "./pages/admin/AdminCropsPage";
@@ -43,44 +46,51 @@ if ('serviceWorker' in navigator) {
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <LanguageProvider>
-      <GeolocationProvider>
-        <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Routes>
-            {/* User Routes */}
-            <Route path="/" element={<Index />} />
-            <Route path="/diagnose" element={<DiagnosePage />} />
-            <Route path="/assistant" element={<AssistantPage />} />
-            <Route path="/harvest" element={<HarvestPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/tips" element={<TipsPage />} />
-            
-            {/* Admin Routes */}
-            <Route path="/admin" element={<AdminLayout />}>
-              <Route index element={<AdminDashboard />} />
-              <Route path="users" element={<AdminUsersPage />} />
-              <Route path="crops" element={<AdminCropsPage />} />
-              <Route path="diseases" element={<AdminDiseasesPage />} />
-              <Route path="treatments" element={<AdminTreatmentsPage />} />
-              <Route path="ai" element={<AdminAIPage />} />
-              <Route path="languages" element={<AdminLanguagesPage />} />
-              <Route path="notifications" element={<AdminAlertsPage />} />
-              <Route path="analytics" element={<AdminMarketPage />} />
-              <Route path="content" element={<AdminTipsPage />} />
-              <Route path="database" element={<AdminDatabasePage />} />
-              <Route path="settings" element={<AdminSettingsPage />} />
-            </Route>
-            
-            {/* Catch all */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-        </TooltipProvider>
-      </GeolocationProvider>
-    </LanguageProvider>
+    <AuthProvider>
+      <LanguageProvider>
+        <GeolocationProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Sonner />
+            <BrowserRouter>
+              <Routes>
+                {/* Public Routes */}
+                <Route path="/" element={<Index />} />
+                <Route path="/diagnose" element={<DiagnosePage />} />
+                <Route path="/assistant" element={<AssistantPage />} />
+                <Route path="/harvest" element={<HarvestPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/tips" element={<TipsPage />} />
+                <Route path="/auth" element={<AuthPage />} />
+                
+                {/* Protected Admin Routes */}
+                <Route path="/admin" element={
+                  <RequireAdmin>
+                    <AdminLayout />
+                  </RequireAdmin>
+                }>
+                  <Route index element={<AdminDashboard />} />
+                  <Route path="users" element={<AdminUsersPage />} />
+                  <Route path="crops" element={<AdminCropsPage />} />
+                  <Route path="diseases" element={<AdminDiseasesPage />} />
+                  <Route path="treatments" element={<AdminTreatmentsPage />} />
+                  <Route path="ai" element={<AdminAIPage />} />
+                  <Route path="languages" element={<AdminLanguagesPage />} />
+                  <Route path="notifications" element={<AdminAlertsPage />} />
+                  <Route path="analytics" element={<AdminMarketPage />} />
+                  <Route path="content" element={<AdminTipsPage />} />
+                  <Route path="database" element={<AdminDatabasePage />} />
+                  <Route path="settings" element={<AdminSettingsPage />} />
+                </Route>
+                
+                {/* Catch all */}
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </BrowserRouter>
+          </TooltipProvider>
+        </GeolocationProvider>
+      </LanguageProvider>
+    </AuthProvider>
   </QueryClientProvider>
 );
 
