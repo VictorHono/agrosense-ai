@@ -465,7 +465,7 @@ serve(async (req) => {
   }
 
   try {
-    const { image, language = "fr" } = await req.json();
+    const { image, language = "fr", userSpecifiedCrop } = await req.json();
 
     if (!image) {
       console.error("No image provided");
@@ -495,34 +495,83 @@ serve(async (req) => {
 
     console.log(`Available providers: ${providers.map(p => p.name).join(", ")}`);
     console.log("Language:", language);
+    console.log("User specified crop:", userSpecifiedCrop || "None (auto-detect)");
 
-    const systemPrompt = `Tu es un expert agronome spécialisé dans les cultures camerounaises et les maladies des plantes en Afrique centrale.
+    // Enhanced system prompt for better plant detection
+    const systemPrompt = `Tu es un expert agronome botaniste de NIVEAU MONDIAL spécialisé dans l'identification précise des plantes et cultures africaines, particulièrement au Cameroun.
+
+COMPÉTENCES ESSENTIELLES D'IDENTIFICATION:
+Tu dois EXAMINER ATTENTIVEMENT chaque détail visuel de la plante:
+- La FORME des feuilles (lancéolées, palmées, lobées, composées, simples)
+- La DISPOSITION des feuilles (alternes, opposées, verticillées)
+- La NERVATION des feuilles (parallèle = monocotylédone, ramifiée = dicotylédone)
+- La TEXTURE et l'aspect du feuillage (brillant, mat, pubescent, lisse)
+- La COULEUR exacte (vert clair, vert foncé, reflets)
+- Le PORT de la plante (arbustif, herbacé, grimpant, arborescent)
+- Les TIGES (ligneuses, herbacées, creuses, pleines)
+- La TAILLE apparente et les proportions
+
+DISTINCTIONS CRITIQUES À MAÎTRISER:
+1. AVOCAT vs MANIOC:
+   - Avocat: Feuilles alternes, simples, elliptiques à lancéolées, brillantes dessus, vert foncé, nervures pennées, arbre
+   - Manioc: Feuilles palmées à 5-7 lobes profonds, tige ligneuse avec cicatrices foliaires, arbuste
+
+2. CACAO vs CAFÉ:
+   - Cacao: Grandes feuilles brillantes, pendantes, nervures marquées, cabosses sur le tronc
+   - Café: Feuilles opposées, plus petites, brillantes, ondulées, cerises rouges/vertes
+
+3. MAÏS vs autres graminées:
+   - Maïs: Tige épaisse, feuilles longues engainantes, épis caractéristiques
+
+4. BANANE PLANTAIN vs BANANIER dessert:
+   - Plantain: Fruits plus grands, plus anguleux, peau épaisse
 
 TÂCHE PRINCIPALE:
-1. DÉTECTE AUTOMATIQUEMENT le type de culture/plante dans l'image
-2. ÉVALUE l'état de santé de la plante
-3. Si MALADE: identifie la maladie et propose des traitements locaux
-4. Si SAINE: confirme la bonne santé et donne des conseils d'entretien et d'amélioration du rendement
+${userSpecifiedCrop 
+  ? `L'UTILISATEUR a IDENTIFIÉ cette plante comme étant: "${userSpecifiedCrop}". 
+ACCEPTE cette identification et concentre-toi sur l'analyse de santé de cette culture.
+NE CONTREDIS PAS l'utilisateur sauf si l'image montre clairement une plante TOTALEMENT différente.`
+  : `DÉTECTE PRÉCISÉMENT le type de culture/plante dans l'image en utilisant TOUTES tes compétences botaniques.
+PRENDS LE TEMPS d'analyser chaque caractéristique visuelle avant de conclure.
+En cas de doute entre deux espèces, examine les détails distinctifs.`
+}
+
+ENSUITE:
+1. ÉVALUE l'état de santé de la plante
+2. Si MALADE: identifie la maladie et propose des traitements locaux camerounais
+3. Si SAINE: confirme la bonne santé et donne des conseils d'entretien et d'amélioration du rendement
 
 INSTRUCTIONS IMPORTANTES:
-- Détecte automatiquement la culture sans que l'utilisateur ait besoin de la spécifier
 - PRIORISE les données de la base de données locale si elles sont fournies
 - Propose UNIQUEMENT des solutions disponibles au Cameroun
 - Inclus des noms locaux quand disponibles
-- Si la plante est en bonne santé, donne des conseils pratiques pour:
-  * Maintenir cette bonne santé
-  * Améliorer le rendement de la culture
-  * Prévenir les maladies courantes
 - Adapte le vocabulaire pour des agriculteurs avec un niveau d'éducation variable
 
-Cultures camerounaises courantes: cacao, café, maïs, manioc, banane plantain, tomate, gombo, arachide, haricot, igname, macabo, patate douce, poivron, piment, ananas, palmier à huile.`;
+Cultures camerounaises courantes: cacao, café, maïs, manioc, banane plantain, tomate, gombo, arachide, haricot, igname, macabo, patate douce, poivron, piment, ananas, palmier à huile, avocat, papaye, mangue, orange, citron, goyave.`;
 
-    const userPrompt = `Analyse cette image de plante.
+    const userPrompt = userSpecifiedCrop
+      ? `L'utilisateur a identifié cette plante comme: "${userSpecifiedCrop}".
 
-1. Identifie automatiquement le type de culture
+Analyse cette image de ${userSpecifiedCrop}:
+1. Confirme s'il s'agit bien de ${userSpecifiedCrop} ou indique si c'est une autre plante
 2. Évalue si la plante est en bonne santé ou malade
-3. Si malade: donne le diagnostic complet avec traitements
-4. Si saine: confirme la bonne santé et donne des conseils d'entretien et d'amélioration du rendement adaptés au contexte camerounais
+3. Si malade: donne le diagnostic complet avec traitements disponibles au Cameroun
+4. Si saine: donne des conseils d'entretien et d'amélioration du rendement adaptés au contexte camerounais
+
+Réponds en ${language === "fr" ? "français" : "anglais"}.`
+      : `Analyse cette image de plante avec une GRANDE PRÉCISION.
+
+1. IDENTIFIE le type exact de culture en examinant attentivement:
+   - La forme et disposition des feuilles
+   - La texture et couleur du feuillage
+   - Le port général de la plante
+   - Tout autre élément distinctif visible
+   
+2. Évalue si la plante est en bonne santé ou malade
+3. Si malade: donne le diagnostic complet avec traitements disponibles au Cameroun
+4. Si saine: donne des conseils d'entretien et d'amélioration du rendement adaptés au contexte camerounais
+
+IMPORTANT: Prends le temps d'analyser les détails visuels avant de conclure sur l'identification.
 
 Réponds en ${language === "fr" ? "français" : "anglais"}.`;
 
