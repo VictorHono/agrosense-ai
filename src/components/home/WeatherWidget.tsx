@@ -1,8 +1,9 @@
-import { Cloud, Sun, Droplets, Wind, CloudRain, CloudLightning, CloudFog, Loader2, MapPin, Navigation } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Cloud, Sun, Droplets, Wind, CloudRain, CloudLightning, CloudFog, Loader2, MapPin, Navigation, AlertTriangle, RefreshCw } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useGeolocationContext } from '@/contexts/GeolocationContext';
+import { Button } from '@/components/ui/button';
 
 interface WeatherData {
   temp: number;
@@ -30,61 +31,112 @@ const iconMap: Record<string, React.ReactNode> = {
 
 export function WeatherWidget() {
   const { language } = useLanguage();
-  const { position, loading: geoLoading, error: geoError, locationInfo } = useGeolocationContext();
+  const { position, loading: geoLoading, error: geoError, locationInfo, refresh: refreshGeo, hasPermission } = useGeolocationContext();
   const [weather, setWeather] = useState<WeatherData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastFetchCoords, setLastFetchCoords] = useState<{lat: number, lon: number} | null>(null);
 
-  useEffect(() => {
-    const fetchWeather = async () => {
-      try {
-        setLoading(true);
-        
-        const body: Record<string, any> = { language };
-        
-        // Use real GPS coordinates if available
-        if (position) {
-          body.latitude = position.latitude;
-          body.longitude = position.longitude;
-          body.altitude = position.altitude;
-          body.accuracy = position.accuracy;
-        } else {
-          // Fallback to default region
-          body.region = 'centre';
-        }
+  const fetchWeather = useCallback(async () => {
+    if (!position) {
+      console.log('[WeatherWidget] No position available, skipping fetch');
+      return;
+    }
 
-        const { data, error: fetchError } = await supabase.functions.invoke('get-weather', {
-          body,
-        });
-
-        if (fetchError) throw fetchError;
-        if (data?.success && data?.weather) {
-          setWeather(data.weather);
-        } else {
-          throw new Error('Invalid response');
-        }
-      } catch (err) {
-        console.error('Weather fetch error:', err);
-        setError(language === 'fr' ? 'Météo indisponible' : 'Weather unavailable');
-      } finally {
-        setLoading(false);
+    // Avoid refetching if coordinates haven't changed significantly (< 1km)
+    if (lastFetchCoords) {
+      const latDiff = Math.abs(position.latitude - lastFetchCoords.lat);
+      const lonDiff = Math.abs(position.longitude - lastFetchCoords.lon);
+      // ~0.01 degrees ≈ 1km
+      if (latDiff < 0.01 && lonDiff < 0.01 && weather) {
+        console.log('[WeatherWidget] Position unchanged, using cached weather');
+        return;
       }
-    };
+    }
 
-    // Fetch when position is available or after geo loading finishes
-    if (!geoLoading) {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      console.log('[WeatherWidget] Fetching weather for:', {
+        latitude: position.latitude,
+        longitude: position.longitude,
+        altitude: position.altitude,
+      });
+
+      const { data, error: fetchError } = await supabase.functions.invoke('get-weather', {
+        body: {
+          language,
+          latitude: position.latitude,
+          longitude: position.longitude,
+          altitude: position.altitude,
+          accuracy: position.accuracy,
+        },
+      });
+
+      if (fetchError) throw fetchError;
+      
+      if (data?.success && data?.weather) {
+        console.log('[WeatherWidget] Weather received:', data.weather.location);
+        setWeather(data.weather);
+        setLastFetchCoords({ lat: position.latitude, lon: position.longitude });
+      } else {
+        throw new Error('Invalid response');
+      }
+    } catch (err) {
+      console.error('[WeatherWidget] Fetch error:', err);
+      setError(language === 'fr' ? 'Météo indisponible' : 'Weather unavailable');
+    } finally {
+      setLoading(false);
+    }
+  }, [position, language, weather, lastFetchCoords]);
+
+  // Fetch weather when position becomes available or changes
+  useEffect(() => {
+    if (position && !geoLoading) {
       fetchWeather();
     }
-  }, [language, position, geoLoading]);
+  }, [position, geoLoading, fetchWeather]);
 
-  if (loading || geoLoading) {
+  // Show permission error state
+  if (!hasPermission && !geoLoading) {
+    return (
+      <div className="p-4 rounded-2xl bg-gradient-to-br from-warning/20 to-warning/5 border border-warning/20">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-warning shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-foreground">
+              {language === 'fr' ? 'Localisation requise' : 'Location required'}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {language === 'fr' 
+                ? 'Autorisez l\'accès à votre position pour des conseils agricoles personnalisés à votre zone.' 
+                : 'Allow location access for agricultural advice personalized to your area.'}
+            </p>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="mt-3"
+              onClick={refreshGeo}
+            >
+              <RefreshCw className="w-3 h-3 mr-2" />
+              {language === 'fr' ? 'Réessayer' : 'Retry'}
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show loading state
+  if (geoLoading || (loading && !weather)) {
     return (
       <div className="p-4 rounded-2xl bg-gradient-to-br from-info/20 to-info/5 border border-info/20">
         <div className="flex items-center justify-center gap-2 py-4">
           <Loader2 className="w-5 h-5 text-info animate-spin" />
           <span className="text-sm text-muted-foreground">
             {geoLoading 
-              ? (language === 'fr' ? 'Localisation...' : 'Getting location...')
+              ? (language === 'fr' ? 'Localisation GPS en cours...' : 'Getting GPS location...')
               : (language === 'fr' ? 'Chargement météo...' : 'Loading weather...')
             }
           </span>
@@ -93,13 +145,42 @@ export function WeatherWidget() {
     );
   }
 
-  if (error || !weather) {
+  // Show error state (but still waiting for position)
+  if (!position && !weather) {
     return (
       <div className="p-4 rounded-2xl bg-gradient-to-br from-muted/20 to-muted/5 border border-border">
-        <p className="text-sm text-muted-foreground text-center">{error || 'Météo indisponible'}</p>
+        <div className="flex items-start gap-3">
+          <MapPin className="w-5 h-5 text-muted-foreground shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-sm text-muted-foreground">
+              {geoError?.message || (language === 'fr' ? 'Position en attente...' : 'Waiting for position...')}
+            </p>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="mt-2 h-7 text-xs"
+              onClick={refreshGeo}
+            >
+              <RefreshCw className="w-3 h-3 mr-1" />
+              {language === 'fr' ? 'Actualiser' : 'Refresh'}
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }
+
+  // Weather error but no data at all
+  if (error && !weather) {
+    return (
+      <div className="p-4 rounded-2xl bg-gradient-to-br from-muted/20 to-muted/5 border border-border">
+        <p className="text-sm text-muted-foreground text-center">{error}</p>
+      </div>
+    );
+  }
+
+  // Show weather data
+  if (!weather) return null;
 
   return (
     <div className="p-4 rounded-2xl bg-gradient-to-br from-info/20 to-info/5 border border-info/20">
@@ -151,13 +232,32 @@ export function WeatherWidget() {
             <MapPin className="w-3 h-3" />
           )}
           <span>{weather.location}</span>
+          {locationInfo && locationInfo.distanceToCity > 5 && (
+            <span className="text-muted-foreground/60">
+              (~{locationInfo.distanceToCity}km)
+            </span>
+          )}
         </div>
-        {weather.altitude && (
-          <span className="text-[10px] text-muted-foreground">
-            ⛰️ {Math.round(weather.altitude)}m
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {weather.climate_zone && (
+            <span className="text-[10px] text-primary/80 bg-primary/10 px-1.5 py-0.5 rounded">
+              {weather.climate_zone}
+            </span>
+          )}
+          {weather.altitude && (
+            <span className="text-[10px] text-muted-foreground">
+              ⛰️ {Math.round(weather.altitude)}m
+            </span>
+          )}
+        </div>
       </div>
+
+      {/* Loading indicator for background refresh */}
+      {loading && weather && (
+        <div className="absolute top-2 right-2">
+          <Loader2 className="w-3 h-3 text-info/50 animate-spin" />
+        </div>
+      )}
     </div>
   );
 }
