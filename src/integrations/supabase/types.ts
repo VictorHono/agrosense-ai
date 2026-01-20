@@ -14,7 +14,313 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      agricultural_alerts: {
+        Row: {
+          created_at: string
+          crop_id: string | null
+          expires_at: string | null
+          id: string
+          is_active: boolean
+          message: string
+          region: string | null
+          severity: string | null
+          title: string
+          type: string
+        }
+        Insert: {
+          created_at?: string
+          crop_id?: string | null
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          message: string
+          region?: string | null
+          severity?: string | null
+          title: string
+          type?: string
+        }
+        Update: {
+          created_at?: string
+          crop_id?: string | null
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          message?: string
+          region?: string | null
+          severity?: string | null
+          title?: string
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agricultural_alerts_crop_id_fkey"
+            columns: ["crop_id"]
+            isOneToOne: false
+            referencedRelation: "crops"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_history: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          role: string
+          session_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          id?: string
+          role: string
+          session_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          role?: string
+          session_id?: string
+        }
+        Relationships: []
+      }
+      crops: {
+        Row: {
+          category: string
+          created_at: string
+          description: string | null
+          growing_season: string[] | null
+          id: string
+          name: string
+          name_local: string | null
+          regions: string[] | null
+          updated_at: string
+        }
+        Insert: {
+          category?: string
+          created_at?: string
+          description?: string | null
+          growing_season?: string[] | null
+          id?: string
+          name: string
+          name_local?: string | null
+          regions?: string[] | null
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          description?: string | null
+          growing_season?: string[] | null
+          id?: string
+          name?: string
+          name_local?: string | null
+          regions?: string[] | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      diseases: {
+        Row: {
+          causes: string[] | null
+          created_at: string
+          crop_id: string | null
+          description: string | null
+          id: string
+          image_url: string | null
+          name: string
+          name_local: string | null
+          severity: string | null
+          symptoms: string[] | null
+          updated_at: string
+        }
+        Insert: {
+          causes?: string[] | null
+          created_at?: string
+          crop_id?: string | null
+          description?: string | null
+          id?: string
+          image_url?: string | null
+          name: string
+          name_local?: string | null
+          severity?: string | null
+          symptoms?: string[] | null
+          updated_at?: string
+        }
+        Update: {
+          causes?: string[] | null
+          created_at?: string
+          crop_id?: string | null
+          description?: string | null
+          id?: string
+          image_url?: string | null
+          name?: string
+          name_local?: string | null
+          severity?: string | null
+          symptoms?: string[] | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "diseases_crop_id_fkey"
+            columns: ["crop_id"]
+            isOneToOne: false
+            referencedRelation: "crops"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      farming_tips: {
+        Row: {
+          category: string
+          content: string
+          created_at: string
+          crop_id: string | null
+          id: string
+          language: string
+          priority: number | null
+          region: string | null
+          season: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          content: string
+          created_at?: string
+          crop_id?: string | null
+          id?: string
+          language?: string
+          priority?: number | null
+          region?: string | null
+          season?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          content?: string
+          created_at?: string
+          crop_id?: string | null
+          id?: string
+          language?: string
+          priority?: number | null
+          region?: string | null
+          season?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "farming_tips_crop_id_fkey"
+            columns: ["crop_id"]
+            isOneToOne: false
+            referencedRelation: "crops"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      market_prices: {
+        Row: {
+          created_at: string
+          crop_id: string | null
+          currency: string
+          id: string
+          market_name: string
+          price_max: number
+          price_min: number
+          quality_grade: string | null
+          recorded_at: string
+          region: string
+          unit: string
+        }
+        Insert: {
+          created_at?: string
+          crop_id?: string | null
+          currency?: string
+          id?: string
+          market_name: string
+          price_max: number
+          price_min: number
+          quality_grade?: string | null
+          recorded_at?: string
+          region: string
+          unit?: string
+        }
+        Update: {
+          created_at?: string
+          crop_id?: string | null
+          currency?: string
+          id?: string
+          market_name?: string
+          price_max?: number
+          price_min?: number
+          quality_grade?: string | null
+          recorded_at?: string
+          region?: string
+          unit?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "market_prices_crop_id_fkey"
+            columns: ["crop_id"]
+            isOneToOne: false
+            referencedRelation: "crops"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      treatments: {
+        Row: {
+          application_method: string | null
+          availability: string | null
+          created_at: string
+          description: string | null
+          disease_id: string | null
+          dosage: string | null
+          id: string
+          name: string
+          price_range: string | null
+          type: string
+          updated_at: string
+        }
+        Insert: {
+          application_method?: string | null
+          availability?: string | null
+          created_at?: string
+          description?: string | null
+          disease_id?: string | null
+          dosage?: string | null
+          id?: string
+          name: string
+          price_range?: string | null
+          type?: string
+          updated_at?: string
+        }
+        Update: {
+          application_method?: string | null
+          availability?: string | null
+          created_at?: string
+          description?: string | null
+          disease_id?: string | null
+          dosage?: string | null
+          id?: string
+          name?: string
+          price_range?: string | null
+          type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "treatments_disease_id_fkey"
+            columns: ["disease_id"]
+            isOneToOne: false
+            referencedRelation: "diseases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never

@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -17,6 +18,25 @@ interface AnalysisResult {
   chemical_treatments: string[];
   prevention: string[];
   affected_crop: string;
+  from_database: boolean;
+}
+
+interface DBDisease {
+  id: string;
+  name: string;
+  name_local: string;
+  description: string;
+  symptoms: string[];
+  causes: string[];
+  severity: string;
+  crops: { name: string; name_local: string };
+  treatments: Array<{
+    name: string;
+    type: string;
+    description: string;
+    dosage: string;
+    application_method: string;
+  }>;
 }
 
 interface AIProvider {
@@ -27,11 +47,9 @@ interface AIProvider {
   isLovable: boolean;
 }
 
-// Get all available AI providers in fallback order
 function getAIProviders(): AIProvider[] {
   const providers: AIProvider[] = [];
 
-  // Primary: Lovable AI Gateway
   const lovableKey = Deno.env.get("LOVABLE_API_KEY");
   if (lovableKey) {
     providers.push({
@@ -43,7 +61,6 @@ function getAIProviders(): AIProvider[] {
     });
   }
 
-  // Fallback 1-5: Gemini API Keys
   const geminiKeys = [
     { key: Deno.env.get("GEMINI_API_KEY_1"), name: "Gemini API 1" },
     { key: Deno.env.get("GEMINI_API_KEY_2"), name: "Gemini API 2" },
@@ -67,8 +84,93 @@ function getAIProviders(): AIProvider[] {
   return providers;
 }
 
-// Build request body for Lovable AI Gateway
-function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData: string) {
+// Search for disease in database
+async function searchDiseaseInDB(
+  supabase: any,
+  cropHint: string,
+  language: string
+): Promise<DBDisease | null> {
+  console.log("Searching database for diseases related to:", cropHint);
+
+  // First try to find the crop
+  const { data: crops } = await supabase
+    .from("crops")
+    .select("id, name, name_local")
+    .or(`name.ilike.%${cropHint}%,name_local.ilike.%${cropHint}%`)
+    .limit(1);
+
+  if (!crops || crops.length === 0) {
+    console.log("No crop found in database for:", cropHint);
+    return null;
+  }
+
+  const crop = crops[0];
+  console.log("Found crop:", crop.name);
+
+  // Get diseases for this crop with treatments
+  const { data: diseases } = await supabase
+    .from("diseases")
+    .select(`
+      id,
+      name,
+      name_local,
+      description,
+      symptoms,
+      causes,
+      severity,
+      treatments (
+        name,
+        type,
+        description,
+        dosage,
+        application_method
+      )
+    `)
+    .eq("crop_id", crop.id);
+
+  if (!diseases || diseases.length === 0) {
+    console.log("No diseases found in database for crop:", crop.name);
+    return null;
+  }
+
+  // Return the first disease with crop info
+  return {
+    ...diseases[0],
+    crops: crop,
+  };
+}
+
+// Convert DB disease to analysis result format
+function dbDiseaseToResult(disease: DBDisease, confidence: number): AnalysisResult {
+  const biologicalTreatments = disease.treatments
+    ?.filter(t => t.type === "biological")
+    .map(t => `${t.name}: ${t.description} (${t.dosage})`) || [];
+
+  const chemicalTreatments = disease.treatments
+    ?.filter(t => t.type === "chemical")
+    .map(t => `${t.name}: ${t.description} (${t.dosage})`) || [];
+
+  return {
+    disease_name: disease.name,
+    local_name: disease.name_local || "",
+    confidence,
+    severity: disease.severity as "low" | "medium" | "high" | "critical",
+    description: disease.description || "",
+    causes: disease.causes || [],
+    symptoms: disease.symptoms || [],
+    biological_treatments: biologicalTreatments,
+    chemical_treatments: chemicalTreatments,
+    prevention: [
+      "Utilisez des variétés résistantes",
+      "Pratiquez la rotation des cultures",
+      "Maintenez une bonne hygiène au champ",
+    ],
+    affected_crop: disease.crops?.name || "",
+    from_database: true,
+  };
+}
+
+function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData: string, dbContext: string) {
   return {
     model: "google/gemini-2.5-pro",
     messages: [
@@ -76,7 +178,7 @@ function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData
       {
         role: "user",
         content: [
-          { type: "text", text: userPrompt },
+          { type: "text", text: `${dbContext}\n\n${userPrompt}` },
           {
             type: "image_url",
             image_url: {
@@ -117,8 +219,7 @@ function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData
   };
 }
 
-// Build request body for direct Gemini API
-function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData: string) {
+function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData: string, dbContext: string) {
   const base64Data = imageData.startsWith("data:") 
     ? imageData.split(",")[1] 
     : imageData;
@@ -141,7 +242,7 @@ function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData:
     contents: [
       {
         parts: [
-          { text: `${systemPrompt}\n\n${userPrompt}\n\nRéponds UNIQUEMENT avec un objet JSON valide suivant ce schéma:\n${jsonSchema}` },
+          { text: `${systemPrompt}\n\n${dbContext}\n\n${userPrompt}\n\nRéponds UNIQUEMENT avec un objet JSON valide suivant ce schéma:\n${jsonSchema}` },
           {
             inline_data: {
               mime_type: "image/jpeg",
@@ -160,42 +261,40 @@ function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData:
   };
 }
 
-// Parse response from Lovable AI Gateway
 function parseLovableResponse(data: any): AnalysisResult | null {
   const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
   if (!toolCall?.function?.arguments) {
     return null;
   }
-  return JSON.parse(toolCall.function.arguments);
+  const result = JSON.parse(toolCall.function.arguments);
+  return { ...result, from_database: false };
 }
 
-// Parse response from direct Gemini API
 function parseGeminiResponse(data: any): AnalysisResult | null {
   const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!textContent) {
     return null;
   }
 
-  // Extract JSON from the response
   const jsonMatch = textContent.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     return null;
   }
 
-  return JSON.parse(jsonMatch[0]);
+  const result = JSON.parse(jsonMatch[0]);
+  return { ...result, from_database: false };
 }
 
-// Check if error is recoverable (should try next provider)
 function isRecoverableError(status: number): boolean {
   return status === 429 || status === 402 || status === 503 || status === 500 || status === 529;
 }
 
-// Make API call with a specific provider
 async function callProvider(
   provider: AIProvider,
   systemPrompt: string,
   userPrompt: string,
-  imageData: string
+  imageData: string,
+  dbContext: string
 ): Promise<{ success: boolean; result?: AnalysisResult; error?: string; shouldRetry: boolean }> {
   console.log(`Trying provider: ${provider.name}`);
 
@@ -210,7 +309,7 @@ async function callProvider(
           Authorization: `Bearer ${provider.apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(buildLovableRequest(systemPrompt, userPrompt, imageData)),
+        body: JSON.stringify(buildLovableRequest(systemPrompt, userPrompt, imageData, dbContext)),
       });
 
       if (!response.ok) {
@@ -231,7 +330,7 @@ async function callProvider(
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(buildGeminiRequest(systemPrompt, userPrompt, imageData)),
+        body: JSON.stringify(buildGeminiRequest(systemPrompt, userPrompt, imageData, dbContext)),
       });
 
       if (!response.ok) {
@@ -271,7 +370,6 @@ async function callProvider(
 }
 
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -287,8 +385,52 @@ serve(async (req) => {
       );
     }
 
+    // Initialize Supabase client
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // STEP 1: Search database for diseases related to the crop
+    let dbDisease: DBDisease | null = null;
+    let dbContext = "";
+
+    if (crop_hint) {
+      dbDisease = await searchDiseaseInDB(supabase, crop_hint, language);
+      
+      if (dbDisease) {
+        console.log("Found disease in database:", dbDisease.name);
+        
+        // Build context from database for AI to use
+        dbContext = `DONNÉES DE RÉFÉRENCE (Base de données locale):
+Culture: ${dbDisease.crops?.name} (${dbDisease.crops?.name_local || ""})
+Maladies connues pour cette culture:
+- ${dbDisease.name} (${dbDisease.name_local || ""}): ${dbDisease.description}
+  Symptômes: ${dbDisease.symptoms?.join(", ") || "Non spécifiés"}
+  Causes: ${dbDisease.causes?.join(", ") || "Non spécifiées"}
+  Traitements disponibles: ${dbDisease.treatments?.map(t => t.name).join(", ") || "Non spécifiés"}
+
+INSTRUCTION: Utilise ces données de référence locales comme base principale. 
+Si l'image correspond à cette maladie, utilise ces informations.
+Si c'est une maladie différente, fais une analyse externe mais privilégie toujours les solutions locales camerounaises.`;
+      }
+    }
+
     const providers = getAIProviders();
     if (providers.length === 0) {
+      // If no AI providers and we have DB data, return DB result
+      if (dbDisease) {
+        console.log("No AI providers, returning database result");
+        return new Response(
+          JSON.stringify({
+            success: true,
+            analysis: dbDiseaseToResult(dbDisease, 70),
+            analyzed_at: new Date().toISOString(),
+            source: "database",
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       console.error("No AI providers configured");
       return new Response(
         JSON.stringify({ error: "Aucun fournisseur IA configuré" }),
@@ -308,6 +450,7 @@ Tu dois analyser l'image fournie et identifier:
 4. Les solutions adaptées au contexte camerounais
 
 IMPORTANT:
+- PRIORISE les données de la base de données locale si elles sont fournies
 - Propose UNIQUEMENT des traitements disponibles au Cameroun
 - Inclus des noms locaux quand disponibles
 - Priorise les solutions biologiques
@@ -320,7 +463,6 @@ Cultures camerounaises courantes: cacao, café, maïs, manioc, banane plantain, 
 
 Réponds en ${language === "fr" ? "français" : "anglais"} avec les informations structurées sur la maladie détectée.`;
 
-    // Try each provider in order until one succeeds
     let lastError = "";
     let usedProvider = "";
 
@@ -329,7 +471,8 @@ Réponds en ${language === "fr" ? "français" : "anglais"} avec les informations
         provider,
         systemPrompt,
         userPrompt,
-        image
+        image,
+        dbContext
       );
 
       if (success && result) {
@@ -340,6 +483,7 @@ Réponds en ${language === "fr" ? "français" : "anglais"} avec les informations
             analysis: result,
             analyzed_at: new Date().toISOString(),
             provider: usedProvider,
+            database_context_used: !!dbContext,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
@@ -355,7 +499,21 @@ Réponds en ${language === "fr" ? "français" : "anglais"} avec les informations
       console.log(`${provider.name} failed, trying next provider...`);
     }
 
-    // All providers failed
+    // All AI providers failed - try to return DB result if available
+    if (dbDisease) {
+      console.log("All AI providers failed, returning database result as fallback");
+      return new Response(
+        JSON.stringify({
+          success: true,
+          analysis: dbDiseaseToResult(dbDisease, 60),
+          analyzed_at: new Date().toISOString(),
+          source: "database_fallback",
+          ai_error: lastError,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     console.error("All AI providers failed. Last error:", lastError);
     return new Response(
       JSON.stringify({ 
