@@ -18,6 +18,8 @@ interface HarvestResult {
     defects: number;
     uniformity: number;
     maturity: number;
+    moisture?: number;
+    cleanliness?: number;
   };
   issues_detected?: string[];
   recommendedUse: string[];
@@ -28,9 +30,22 @@ interface HarvestResult {
     unit: string;
     market: string;
   };
+  // Yield estimation for seeds/grains
+  yield_estimation?: {
+    estimated_yield_per_hectare: string;
+    yield_potential: "low" | "medium" | "high" | "excellent";
+    yield_factors: string[];
+    optimization_tips: string[];
+  };
   feedback: string;
   improvement_tips: string[];
   storage_tips: string[];
+  // Selling strategy
+  selling_strategy?: {
+    best_time_to_sell: string;
+    target_buyers: string[];
+    negotiation_tips: string[];
+  };
   from_database: boolean;
 }
 
@@ -161,7 +176,7 @@ function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData
         type: "function",
         function: {
           name: "analyze_harvest_quality",
-          description: "Analyse automatiquement le type de récolte et sa qualité",
+          description: "Analyse automatiquement le type de récolte, sa qualité, estime le rendement et donne une stratégie de vente",
           parameters: {
             type: "object",
             properties: {
@@ -177,6 +192,8 @@ function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData
                   defects: { type: "number", description: "Pourcentage de défauts 0-100" },
                   uniformity: { type: "number", description: "Score uniformité 0-100" },
                   maturity: { type: "number", description: "Score maturité 0-100" },
+                  moisture: { type: "number", description: "Estimation humidité 0-100 (important pour graines)" },
+                  cleanliness: { type: "number", description: "Score propreté/absence de débris 0-100" },
                 },
                 required: ["color", "size", "defects", "uniformity", "maturity"],
               },
@@ -193,11 +210,32 @@ function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData
                 },
                 required: ["min", "max", "currency", "unit", "market"],
               },
+              yield_estimation: {
+                type: "object",
+                description: "Estimation du rendement pour les graines/semences",
+                properties: {
+                  estimated_yield_per_hectare: { type: "string", description: "Rendement estimé par hectare (ex: 2-3 tonnes/ha)" },
+                  yield_potential: { type: "string", enum: ["low", "medium", "high", "excellent"], description: "Potentiel de rendement" },
+                  yield_factors: { type: "array", items: { type: "string" }, description: "Facteurs affectant le rendement" },
+                  optimization_tips: { type: "array", items: { type: "string" }, description: "Conseils pour optimiser le rendement" },
+                },
+                required: ["estimated_yield_per_hectare", "yield_potential", "yield_factors", "optimization_tips"],
+              },
               feedback: { type: "string", description: "Commentaire détaillé sur la qualité" },
               improvement_tips: { type: "array", items: { type: "string" }, description: "Conseils pour améliorer la qualité des prochaines récoltes" },
               storage_tips: { type: "array", items: { type: "string" }, description: "Conseils de stockage et conservation" },
+              selling_strategy: {
+                type: "object",
+                description: "Stratégie de vente optimale",
+                properties: {
+                  best_time_to_sell: { type: "string", description: "Meilleur moment pour vendre" },
+                  target_buyers: { type: "array", items: { type: "string" }, description: "Acheteurs cibles recommandés" },
+                  negotiation_tips: { type: "array", items: { type: "string" }, description: "Conseils de négociation" },
+                },
+                required: ["best_time_to_sell", "target_buyers", "negotiation_tips"],
+              },
             },
-            required: ["is_good_quality", "detected_crop", "grade", "quality", "recommendedUse", "estimatedPrice", "feedback", "improvement_tips", "storage_tips"],
+            required: ["is_good_quality", "detected_crop", "grade", "quality", "recommendedUse", "estimatedPrice", "yield_estimation", "feedback", "improvement_tips", "storage_tips", "selling_strategy"],
             additionalProperties: false,
           },
         },
@@ -222,7 +260,9 @@ function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData:
     "size": "number 0-100",
     "defects": "number 0-100",
     "uniformity": "number 0-100",
-    "maturity": "number 0-100"
+    "maturity": "number 0-100",
+    "moisture": "number 0-100 - estimation humidité (important pour graines)",
+    "cleanliness": "number 0-100 - propreté/absence de débris"
   },
   "issues_detected": ["array - Problèmes détectés"],
   "recommendedUse": ["array of strings"],
@@ -233,9 +273,20 @@ function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData:
     "unit": "kg ou sac",
     "market": "string - marché camerounais"
   },
+  "yield_estimation": {
+    "estimated_yield_per_hectare": "string - ex: 2-3 tonnes/ha",
+    "yield_potential": "low|medium|high|excellent",
+    "yield_factors": ["array - facteurs affectant le rendement"],
+    "optimization_tips": ["array - conseils pour optimiser le rendement"]
+  },
   "feedback": "string - commentaire détaillé",
   "improvement_tips": ["array - Conseils amélioration prochaines récoltes"],
-  "storage_tips": ["array - Conseils stockage et conservation"]
+  "storage_tips": ["array - Conseils stockage et conservation"],
+  "selling_strategy": {
+    "best_time_to_sell": "string - meilleur moment pour vendre",
+    "target_buyers": ["array - acheteurs cibles recommandés"],
+    "negotiation_tips": ["array - conseils de négociation"]
+  }
 }`;
 
   return {
@@ -508,14 +559,27 @@ serve(async (req) => {
       );
     }
 
-    const systemPrompt = `Tu es un expert en évaluation de la qualité des récoltes agricoles au Cameroun.
+    const systemPrompt = `Tu es un expert en évaluation de la qualité des récoltes agricoles au Cameroun, spécialisé dans le tri qualitatif pour la vente et l'estimation du rendement.
 
 TÂCHE PRINCIPALE:
 1. DÉTECTE AUTOMATIQUEMENT le type de produit agricole dans l'image
-2. ÉVALUE la qualité visuelle (couleur, taille, uniformité, maturité, défauts)
+2. ÉVALUE la qualité visuelle (couleur, taille, uniformité, maturité, défauts, humidité, propreté)
 3. ATTRIBUE un grade de qualité (A=Export/Premium, B=Marché local qualité standard, C=Transformation/Qualité inférieure)
 4. ESTIME le prix sur les marchés camerounais
-5. DONNE des conseils pour améliorer la qualité des prochaines récoltes
+5. ESTIME LE RENDEMENT potentiel si ces graines/semences sont plantées
+6. DONNE une STRATÉGIE DE VENTE optimale
+7. DONNE des conseils pour améliorer la qualité des prochaines récoltes
+
+ÉVALUATION DU RENDEMENT (pour graines/semences):
+- Analyse la qualité des graines: taille, uniformité, absence de dommages
+- Estime le rendement potentiel par hectare si ces semences sont utilisées
+- Identifie les facteurs qui pourraient affecter le rendement (qualité des graines, humidité, présence de maladies)
+- Donne des conseils pour optimiser le rendement lors de la plantation
+
+STRATÉGIE DE VENTE:
+- Identifie le meilleur moment pour vendre selon la saison et le marché
+- Recommande les acheteurs cibles (grossistes, détaillants, exportateurs, transformateurs)
+- Donne des conseils de négociation basés sur la qualité du produit
 
 IMPORTANT:
 - Détecte automatiquement le produit sans que l'utilisateur ait besoin de le spécifier
@@ -523,21 +587,23 @@ IMPORTANT:
 - Base tes estimations de prix sur les marchés camerounais actuels${nearestMarket ? ` (référence: ${nearestMarket})` : ""}
 - Devise: XAF (Franc CFA)
 - Sois réaliste et précis dans tes évaluations
-- Prends en compte la saison actuelle pour les prix
+- Prends en compte la saison actuelle pour les prix et la stratégie de vente
 - Ajuste les prix selon le grade de qualité détecté
-- Si tu détectes des problèmes (pourriture, parasites, moisissures), signale-les
+- Si tu détectes des problèmes (pourriture, parasites, moisissures, humidité excessive), signale-les
 - Donne toujours des conseils pratiques pour améliorer les prochaines récoltes
 - Inclus des conseils de stockage et conservation
-${altitude !== null ? `- L'agriculteur est à ${Math.round(altitude)}m d'altitude: adapte les conseils de conservation` : ""}
-${regionName ? `- L'agriculteur est dans la région ${regionName}: utilise les prix locaux de cette zone` : ""}`;
+${altitude !== null ? `- L'agriculteur est à ${Math.round(altitude)}m d'altitude: adapte les conseils de conservation et le rendement estimé` : ""}
+${regionName ? `- L'agriculteur est dans la région ${regionName}: utilise les prix locaux de cette zone et adapte les conseils` : ""}`;
 
-    const userPrompt = `Analyse cette image de récolte.
+    const userPrompt = `Analyse cette image de récolte en détail.
 
 1. Identifie automatiquement le type de produit agricole
-2. Évalue la qualité visuelle complète
-3. Attribue un grade (A, B ou C)
+2. Évalue la qualité visuelle complète (couleur, taille, uniformité, maturité, défauts, humidité, propreté)
+3. Attribue un grade (A, B ou C) pour le tri et la vente
 4. Estime le prix pour le marché camerounais
-5. Donne des conseils d'amélioration et de stockage
+5. SI CE SONT DES GRAINES/SEMENCES: Estime le rendement potentiel par hectare si elles sont plantées
+6. Donne une stratégie de vente optimale (meilleur moment, acheteurs cibles, conseils de négociation)
+7. Donne des conseils d'amélioration et de stockage
 
 Réponds en ${language === "fr" ? "français" : "anglais"}.`;
 
