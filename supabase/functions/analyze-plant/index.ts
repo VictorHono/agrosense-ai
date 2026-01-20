@@ -459,13 +459,73 @@ function enrichResultWithDatabase(
   return result;
 }
 
+// Get location context for advice
+function getLocationContext(
+  latitude: number | null,
+  longitude: number | null,
+  altitude: number | null,
+  language: string
+): string {
+  if (!latitude || !longitude) {
+    return "";
+  }
+
+  let context = `\n\n--- CONTEXTE GÉOGRAPHIQUE DE L'AGRICULTEUR ---\n`;
+  context += `Position GPS: ${latitude.toFixed(4)}°N, ${longitude.toFixed(4)}°E\n`;
+  
+  if (altitude !== null) {
+    context += `Altitude: ${Math.round(altitude)}m\n`;
+    
+    if (altitude > 1200) {
+      context += `Zone: Hautes terres (climat frais, risque de gelées matinales)\n`;
+    } else if (altitude > 800) {
+      context += `Zone: Moyenne altitude (climat tempéré tropical)\n`;
+    } else if (altitude > 400) {
+      context += `Zone: Basse altitude (climat tropical humide)\n`;
+    } else {
+      context += `Zone: Plaine côtière ou forestière\n`;
+    }
+  }
+
+  // Determine region from coordinates
+  if (latitude > 8) {
+    context += `Région climatique: Soudano-sahélienne (saison sèche longue, températures élevées)\n`;
+    context += `Sols typiques: Sablonneux à argileux, parfois ferrugineux\n`;
+  } else if (latitude > 6) {
+    context += `Région climatique: Haute Guinée / Adamaoua (savane, altitude variable)\n`;
+    context += `Sols typiques: Ferralitiques, propices à l'élevage et aux cultures tempérées\n`;
+  } else if (latitude < 5 && longitude < 11) {
+    context += `Région climatique: Forestière équatoriale (forte humidité, deux saisons de pluies)\n`;
+    context += `Sols typiques: Ferralitiques humides, riches en matière organique\n`;
+  } else {
+    context += `Région climatique: Forestière guinéenne (humide, cultures vivrières variées)\n`;
+    context += `Sols typiques: Ferralitiques à hydromorphes\n`;
+  }
+
+  context += `\nADAPTE tes conseils à cette zone géographique spécifique et à l'altitude de l'agriculteur.\n`;
+  
+  return context;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { image, language = "fr", userSpecifiedCrop } = await req.json();
+    const { 
+      image, 
+      language = "fr", 
+      userSpecifiedCrop,
+      latitude = null,
+      longitude = null,
+      altitude = null,
+      accuracy = null,
+      regionName = null,
+      climateZone = null,
+    } = await req.json();
+
+    console.log("Analyze request - Location:", latitude, longitude, "Alt:", altitude, "Region:", regionName);
 
     if (!image) {
       console.error("No image provided");
@@ -482,7 +542,13 @@ serve(async (req) => {
 
     // Fetch all database context
     const { crops, diseases } = await fetchDatabaseContext(supabase);
-    const dbContext = buildDatabaseContext(crops, diseases);
+    let dbContext = buildDatabaseContext(crops, diseases);
+    
+    // Add location context if available
+    const locationContext = getLocationContext(latitude, longitude, altitude, language);
+    if (locationContext) {
+      dbContext += locationContext;
+    }
 
     const providers = getAIProviders();
     if (providers.length === 0) {
@@ -546,6 +612,12 @@ INSTRUCTIONS IMPORTANTES:
 - Propose UNIQUEMENT des solutions disponibles au Cameroun
 - Inclus des noms locaux quand disponibles
 - Adapte le vocabulaire pour des agriculteurs avec un niveau d'éducation variable
+- TIENS COMPTE de la position géographique et de l'altitude de l'agriculteur pour adapter tes conseils
+- Les conditions climatiques et les sols varient selon les régions: adapte les recommandations
+
+${regionName ? `L'agriculteur se trouve dans la région: ${regionName}` : ""}
+${climateZone ? `Zone climatique: ${climateZone}` : ""}
+${altitude !== null ? `Altitude: ${Math.round(altitude)}m - Adapte tes conseils à cette altitude` : ""}
 
 Cultures camerounaises courantes: cacao, café, maïs, manioc, banane plantain, tomate, gombo, arachide, haricot, igname, macabo, patate douce, poivron, piment, ananas, palmier à huile, avocat, papaye, mangue, orange, citron, goyave.`;
 

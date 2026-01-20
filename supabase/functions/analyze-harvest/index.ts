@@ -399,13 +399,81 @@ function enrichResultWithDatabase(result: HarvestResult, crops: DBCrop[], prices
   return result;
 }
 
+// Get location context for pricing and advice
+function getLocationContext(
+  latitude: number | null,
+  longitude: number | null,
+  altitude: number | null,
+  regionName: string | null,
+  language: string
+): { context: string; nearestMarket: string } {
+  let nearestMarket = "Marché Central";
+  
+  if (!latitude || !longitude) {
+    return { context: "", nearestMarket };
+  }
+
+  let context = `\n\n--- CONTEXTE GÉOGRAPHIQUE DE L'AGRICULTEUR ---\n`;
+  context += `Position GPS: ${latitude.toFixed(4)}°N, ${longitude.toFixed(4)}°E\n`;
+  
+  if (altitude !== null) {
+    context += `Altitude: ${Math.round(altitude)}m\n`;
+  }
+
+  // Determine nearest market based on coordinates
+  const markets = [
+    { name: "Marché Mokolo", lat: 3.8667, lon: 11.5167, region: "Centre" },
+    { name: "Marché Sandaga", lat: 4.0503, lon: 9.7000, region: "Littoral" },
+    { name: "Marché Mboppi", lat: 4.0450, lon: 9.7050, region: "Littoral" },
+    { name: "Marché de Bamenda", lat: 5.9500, lon: 10.1500, region: "Nord-Ouest" },
+    { name: "Marché de Bafoussam", lat: 5.4833, lon: 10.4167, region: "Ouest" },
+    { name: "Marché de Garoua", lat: 9.3000, lon: 13.3833, region: "Nord" },
+    { name: "Marché de Maroua", lat: 10.5917, lon: 14.3167, region: "Extrême-Nord" },
+    { name: "Marché d'Ebolowa", lat: 2.9333, lon: 11.1500, region: "Sud" },
+    { name: "Marché de Bertoua", lat: 4.0333, lon: 14.0333, region: "Est" },
+    { name: "Marché de Buéa", lat: 4.1500, lon: 9.2333, region: "Sud-Ouest" },
+  ];
+
+  let minDistance = Infinity;
+  for (const market of markets) {
+    const dLat = (latitude - market.lat) * Math.PI / 180;
+    const dLon = (longitude - market.lon) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 + 
+              Math.cos(latitude * Math.PI / 180) * Math.cos(market.lat * Math.PI / 180) * 
+              Math.sin(dLon / 2) ** 2;
+    const distance = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 6371;
+    
+    if (distance < minDistance) {
+      minDistance = distance;
+      nearestMarket = market.name;
+    }
+  }
+
+  context += `Marché le plus proche: ${nearestMarket} (${Math.round(minDistance)} km)\n`;
+  context += regionName ? `Région: ${regionName}\n` : "";
+  context += `\nUTILISE les prix du marché ${nearestMarket} comme référence principale.\n`;
+  context += `ADAPTE tes conseils de stockage et transport selon la distance au marché.\n`;
+  
+  return { context, nearestMarket };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { image, language = "fr" } = await req.json();
+    const { 
+      image, 
+      language = "fr",
+      latitude = null,
+      longitude = null,
+      altitude = null,
+      regionName = null,
+      climateZone = null,
+    } = await req.json();
+
+    console.log("Harvest analysis - Location:", latitude, longitude, "Alt:", altitude, "Region:", regionName);
 
     if (!image) {
       return new Response(
@@ -421,7 +489,15 @@ serve(async (req) => {
 
     // Fetch database context
     const { crops, prices } = await fetchDatabaseContext(supabase);
-    const dbContext = buildDatabaseContext(crops, prices);
+    let dbContext = buildDatabaseContext(crops, prices);
+    
+    // Add location context
+    const { context: locationContext, nearestMarket } = getLocationContext(
+      latitude, longitude, altitude, regionName, language
+    );
+    if (locationContext) {
+      dbContext += locationContext;
+    }
 
     const providers = getAIProviders();
     if (providers.length === 0) {
@@ -443,14 +519,16 @@ TÂCHE PRINCIPALE:
 IMPORTANT:
 - Détecte automatiquement le produit sans que l'utilisateur ait besoin de le spécifier
 - UTILISE EN PRIORITÉ les prix de référence de la base de données locale s'ils sont fournis
-- Base tes estimations de prix sur les marchés camerounais actuels (Mokolo, Mboppi, Sandaga, Marché Central, etc.)
+- Base tes estimations de prix sur les marchés camerounais actuels${nearestMarket ? ` (référence: ${nearestMarket})` : ""}
 - Devise: XAF (Franc CFA)
 - Sois réaliste et précis dans tes évaluations
 - Prends en compte la saison actuelle pour les prix
 - Ajuste les prix selon le grade de qualité détecté
 - Si tu détectes des problèmes (pourriture, parasites, moisissures), signale-les
 - Donne toujours des conseils pratiques pour améliorer les prochaines récoltes
-- Inclus des conseils de stockage et conservation`;
+- Inclus des conseils de stockage et conservation
+${altitude !== null ? `- L'agriculteur est à ${Math.round(altitude)}m d'altitude: adapte les conseils de conservation` : ""}
+${regionName ? `- L'agriculteur est dans la région ${regionName}: utilise les prix locaux de cette zone` : ""}`;
 
     const userPrompt = `Analyse cette image de récolte.
 
