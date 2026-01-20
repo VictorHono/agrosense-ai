@@ -284,15 +284,24 @@ export function useGeolocation(options: UseGeolocationOptions = {}) {
       };
     }
 
-    // Start watching or get current position
-    if (watchPosition) {
-      startWatching();
-    } else {
-      getCurrentPosition();
-    }
+    // IMPORTANT: Automatically request geolocation permission on app start
+    // This triggers the browser's permission prompt immediately
+    console.log('[Geolocation] App started - requesting position permission...');
+    
+    // Small delay to ensure the app is fully rendered before showing permission prompt
+    const initTimer = setTimeout(() => {
+      if (!mountedRef.current) return;
+      
+      if (watchPosition) {
+        startWatching();
+      } else {
+        getCurrentPosition();
+      }
+    }, 500); // 500ms delay for better UX - app shows first, then permission prompt
 
     return () => {
       mountedRef.current = false;
+      clearTimeout(initTimer);
       if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
         watchIdRef.current = null;
