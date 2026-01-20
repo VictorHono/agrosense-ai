@@ -7,6 +7,9 @@ const corsHeaders = {
 };
 
 interface HarvestResult {
+  is_good_quality: boolean;
+  detected_crop: string;
+  detected_crop_local?: string;
   grade: "A" | "B" | "C";
   quality: {
     color: number;
@@ -15,6 +18,7 @@ interface HarvestResult {
     uniformity: number;
     maturity: number;
   };
+  issues_detected?: string[];
   recommendedUse: string[];
   estimatedPrice: {
     min: number;
@@ -24,7 +28,15 @@ interface HarvestResult {
     market: string;
   };
   feedback: string;
+  improvement_tips: string[];
+  storage_tips: string[];
   from_database: boolean;
+}
+
+interface DBCrop {
+  id: string;
+  name: string;
+  name_local: string;
 }
 
 interface AIProvider {
@@ -72,49 +84,60 @@ function getAIProviders(): AIProvider[] {
   return providers;
 }
 
-// Fetch market prices from database
-async function fetchMarketPrices(supabase: any, cropType: string): Promise<any[]> {
-  console.log("Searching market prices for:", cropType);
+// Fetch all crops and market prices from database
+async function fetchDatabaseContext(supabase: any): Promise<{ crops: DBCrop[]; prices: any[] }> {
+  console.log("Fetching database context for crops and prices...");
 
-  // First find the crop
   const { data: crops } = await supabase
     .from("crops")
-    .select("id, name")
-    .or(`name.ilike.%${cropType}%,name_local.ilike.%${cropType}%`)
-    .limit(1);
+    .select("id, name, name_local");
 
-  if (!crops || crops.length === 0) {
-    console.log("No crop found for:", cropType);
-    return [];
-  }
-
-  const cropId = crops[0].id;
-
-  // Get market prices for this crop
   const { data: prices } = await supabase
     .from("market_prices")
-    .select("*")
-    .eq("crop_id", cropId)
+    .select("*, crops(name, name_local)")
     .order("recorded_at", { ascending: false })
-    .limit(5);
+    .limit(50);
 
-  console.log("Found prices:", prices?.length || 0);
-  return prices || [];
+  console.log(`Found ${crops?.length || 0} crops and ${prices?.length || 0} price records`);
+  
+  return {
+    crops: crops || [],
+    prices: prices || [],
+  };
 }
 
-// Build price context for AI
-function buildPriceContext(prices: any[]): string {
-  if (prices.length === 0) return "";
-
-  let context = "\n--- PRIX DU MARCHÉ (Base de données locale) ---\n";
-  prices.forEach(p => {
-    context += `Grade ${p.quality_grade || "A"}: ${p.price_min}-${p.price_max} ${p.currency}/${p.unit} au ${p.market_name} (${p.region})\n`;
+// Build comprehensive context for AI
+function buildDatabaseContext(crops: DBCrop[], prices: any[]): string {
+  let context = `--- BASE DE DONNÉES AGRICOLE CAMEROUNAISE ---\n\n`;
+  
+  context += `CULTURES ENREGISTRÉES:\n`;
+  crops.forEach(crop => {
+    context += `- ${crop.name} (${crop.name_local || ""})\n`;
   });
-  context += "\nUTILISE CES PRIX COMME RÉFÉRENCE PRINCIPALE pour l'estimation.\n";
+  
+  context += `\nPRIX DU MARCHÉ RÉCENTS:\n`;
+  const pricesByGrade: { [key: string]: any[] } = {};
+  
+  prices.forEach(p => {
+    const cropName = p.crops?.name || "Inconnu";
+    const key = `${cropName}-${p.quality_grade}`;
+    if (!pricesByGrade[key]) {
+      pricesByGrade[key] = [];
+    }
+    pricesByGrade[key].push(p);
+  });
+
+  Object.entries(pricesByGrade).forEach(([key, priceList]) => {
+    const p = priceList[0]; // Most recent
+    context += `- ${p.crops?.name || "Produit"} Grade ${p.quality_grade || "A"}: ${p.price_min}-${p.price_max} ${p.currency}/${p.unit} (${p.market_name}, ${p.region})\n`;
+  });
+
+  context += `\nINSTRUCTION: Utilise ces prix comme référence principale pour tes estimations. Détecte automatiquement le type de produit agricole dans l'image.`;
+  
   return context;
 }
 
-function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData: string, priceContext: string) {
+function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData: string, dbContext: string) {
   return {
     model: "google/gemini-2.5-flash",
     messages: [
@@ -122,7 +145,7 @@ function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData
       {
         role: "user",
         content: [
-          { type: "text", text: `${priceContext}\n\n${userPrompt}` },
+          { type: "text", text: `${dbContext}\n\n${userPrompt}` },
           {
             type: "image_url",
             image_url: {
@@ -137,10 +160,13 @@ function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData
         type: "function",
         function: {
           name: "analyze_harvest_quality",
-          description: "Analyse la qualité d'une récolte et retourne les informations détaillées",
+          description: "Analyse automatiquement le type de récolte et sa qualité",
           parameters: {
             type: "object",
             properties: {
+              is_good_quality: { type: "boolean", description: "True si la récolte est de bonne qualité générale" },
+              detected_crop: { type: "string", description: "Type de produit agricole détecté automatiquement" },
+              detected_crop_local: { type: "string", description: "Nom local camerounais du produit" },
               grade: { type: "string", enum: ["A", "B", "C"], description: "Grade de qualité global" },
               quality: {
                 type: "object",
@@ -153,6 +179,7 @@ function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData
                 },
                 required: ["color", "size", "defects", "uniformity", "maturity"],
               },
+              issues_detected: { type: "array", items: { type: "string" }, description: "Problèmes détectés sur la récolte" },
               recommendedUse: { type: "array", items: { type: "string" }, description: "Utilisations recommandées" },
               estimatedPrice: {
                 type: "object",
@@ -166,8 +193,10 @@ function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData
                 required: ["min", "max", "currency", "unit", "market"],
               },
               feedback: { type: "string", description: "Commentaire détaillé sur la qualité" },
+              improvement_tips: { type: "array", items: { type: "string" }, description: "Conseils pour améliorer la qualité des prochaines récoltes" },
+              storage_tips: { type: "array", items: { type: "string" }, description: "Conseils de stockage et conservation" },
             },
-            required: ["grade", "quality", "recommendedUse", "estimatedPrice", "feedback"],
+            required: ["is_good_quality", "detected_crop", "grade", "quality", "recommendedUse", "estimatedPrice", "feedback", "improvement_tips", "storage_tips"],
             additionalProperties: false,
           },
         },
@@ -177,12 +206,15 @@ function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData
   };
 }
 
-function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData: string, priceContext: string) {
+function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData: string, dbContext: string) {
   const base64Data = imageData.startsWith("data:") 
     ? imageData.split(",")[1] 
     : imageData;
 
   const jsonSchema = `{
+  "is_good_quality": "boolean - true si bonne qualité générale",
+  "detected_crop": "string - Type de produit détecté automatiquement",
+  "detected_crop_local": "string - Nom local camerounais",
   "grade": "string - A, B ou C",
   "quality": {
     "color": "number 0-100",
@@ -191,6 +223,7 @@ function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData:
     "uniformity": "number 0-100",
     "maturity": "number 0-100"
   },
+  "issues_detected": ["array - Problèmes détectés"],
   "recommendedUse": ["array of strings"],
   "estimatedPrice": {
     "min": "number",
@@ -199,14 +232,16 @@ function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData:
     "unit": "kg ou sac",
     "market": "string - marché camerounais"
   },
-  "feedback": "string - commentaire détaillé"
+  "feedback": "string - commentaire détaillé",
+  "improvement_tips": ["array - Conseils amélioration prochaines récoltes"],
+  "storage_tips": ["array - Conseils stockage et conservation"]
 }`;
 
   return {
     contents: [
       {
         parts: [
-          { text: `${systemPrompt}\n\n${priceContext}\n\n${userPrompt}\n\nRéponds UNIQUEMENT avec un objet JSON valide suivant ce schéma:\n${jsonSchema}` },
+          { text: `${systemPrompt}\n\n${dbContext}\n\n${userPrompt}\n\nRéponds UNIQUEMENT avec un objet JSON valide suivant ce schéma:\n${jsonSchema}` },
           {
             inline_data: {
               mime_type: "image/jpeg",
@@ -256,7 +291,7 @@ async function callProvider(
   systemPrompt: string,
   userPrompt: string,
   imageData: string,
-  priceContext: string
+  dbContext: string
 ): Promise<{ success: boolean; result?: HarvestResult; error?: string; shouldRetry: boolean }> {
   console.log(`Trying provider: ${provider.name}`);
 
@@ -271,7 +306,7 @@ async function callProvider(
           Authorization: `Bearer ${provider.apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(buildLovableRequest(systemPrompt, userPrompt, imageData, priceContext)),
+        body: JSON.stringify(buildLovableRequest(systemPrompt, userPrompt, imageData, dbContext)),
       });
 
       if (!response.ok) {
@@ -292,7 +327,7 @@ async function callProvider(
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(buildGeminiRequest(systemPrompt, userPrompt, imageData, priceContext)),
+        body: JSON.stringify(buildGeminiRequest(systemPrompt, userPrompt, imageData, dbContext)),
       });
 
       if (!response.ok) {
@@ -318,7 +353,7 @@ async function callProvider(
       };
     }
 
-    console.log(`${provider.name} succeeded:`, result.grade);
+    console.log(`${provider.name} succeeded - Crop: ${result.detected_crop}, Grade: ${result.grade}`);
     return { success: true, result, shouldRetry: false };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -331,13 +366,46 @@ async function callProvider(
   }
 }
 
+// Enrich result with database info
+function enrichResultWithDatabase(result: HarvestResult, crops: DBCrop[], prices: any[]): HarvestResult {
+  // Try to find matching crop for local name
+  const matchingCrop = crops.find(c => 
+    c.name.toLowerCase().includes(result.detected_crop.toLowerCase()) ||
+    result.detected_crop.toLowerCase().includes(c.name.toLowerCase())
+  );
+
+  if (matchingCrop) {
+    result.detected_crop_local = matchingCrop.name_local || result.detected_crop_local;
+    
+    // Find price from database for this crop and grade
+    const matchingPrice = prices.find(p => 
+      p.crop_id === matchingCrop.id && 
+      p.quality_grade === result.grade
+    );
+
+    if (matchingPrice) {
+      console.log("Using database price for", matchingCrop.name, "grade", result.grade);
+      result.estimatedPrice = {
+        min: matchingPrice.price_min,
+        max: matchingPrice.price_max,
+        currency: matchingPrice.currency,
+        unit: matchingPrice.unit,
+        market: matchingPrice.market_name,
+      };
+      result.from_database = true;
+    }
+  }
+
+  return result;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { image, crop_type, language = "fr" } = await req.json();
+    const { image, language = "fr" } = await req.json();
 
     if (!image) {
       return new Response(
@@ -351,12 +419,9 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Fetch market prices from database
-    let priceContext = "";
-    if (crop_type) {
-      const prices = await fetchMarketPrices(supabase, crop_type);
-      priceContext = buildPriceContext(prices);
-    }
+    // Fetch database context
+    const { crops, prices } = await fetchDatabaseContext(supabase);
+    const dbContext = buildDatabaseContext(crops, prices);
 
     const providers = getAIProviders();
     if (providers.length === 0) {
@@ -367,23 +432,34 @@ serve(async (req) => {
     }
 
     const systemPrompt = `Tu es un expert en évaluation de la qualité des récoltes agricoles au Cameroun.
-Tu dois analyser l'image de produits agricoles et évaluer:
-1. La qualité visuelle (couleur, taille, uniformité, maturité)
-2. Le pourcentage de défauts
-3. Le grade de qualité (A=Export/Premium, B=Marché local qualité standard, C=Transformation/Qualité inférieure)
-4. Les utilisations recommandées
-5. Le prix estimé sur les marchés camerounais
+
+TÂCHE PRINCIPALE:
+1. DÉTECTE AUTOMATIQUEMENT le type de produit agricole dans l'image
+2. ÉVALUE la qualité visuelle (couleur, taille, uniformité, maturité, défauts)
+3. ATTRIBUE un grade de qualité (A=Export/Premium, B=Marché local qualité standard, C=Transformation/Qualité inférieure)
+4. ESTIME le prix sur les marchés camerounais
+5. DONNE des conseils pour améliorer la qualité des prochaines récoltes
 
 IMPORTANT:
+- Détecte automatiquement le produit sans que l'utilisateur ait besoin de le spécifier
 - UTILISE EN PRIORITÉ les prix de référence de la base de données locale s'ils sont fournis
 - Base tes estimations de prix sur les marchés camerounais actuels (Mokolo, Mboppi, Sandaga, Marché Central, etc.)
 - Devise: XAF (Franc CFA)
 - Sois réaliste et précis dans tes évaluations
 - Prends en compte la saison actuelle pour les prix
-- Ajuste les prix selon le grade de qualité détecté`;
+- Ajuste les prix selon le grade de qualité détecté
+- Si tu détectes des problèmes (pourriture, parasites, moisissures), signale-les
+- Donne toujours des conseils pratiques pour améliorer les prochaines récoltes
+- Inclus des conseils de stockage et conservation`;
 
-    const userPrompt = `Analyse cette image de récolte${crop_type ? ` (produit: ${crop_type})` : ""}.
-Évalue la qualité et donne une estimation de prix pour le marché camerounais.
+    const userPrompt = `Analyse cette image de récolte.
+
+1. Identifie automatiquement le type de produit agricole
+2. Évalue la qualité visuelle complète
+3. Attribue un grade (A, B ou C)
+4. Estime le prix pour le marché camerounais
+5. Donne des conseils d'amélioration et de stockage
+
 Réponds en ${language === "fr" ? "français" : "anglais"}.`;
 
     let lastError = "";
@@ -394,16 +470,18 @@ Réponds en ${language === "fr" ? "français" : "anglais"}.`;
         systemPrompt,
         userPrompt,
         image,
-        priceContext
+        dbContext
       );
 
       if (success && result) {
+        // Enrich with database info
+        const enrichedResult = enrichResultWithDatabase(result, crops, prices);
+        
         return new Response(
           JSON.stringify({
             success: true,
-            analysis: result,
+            analysis: enrichedResult,
             analyzed_at: new Date().toISOString(),
-            database_prices_used: !!priceContext,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
