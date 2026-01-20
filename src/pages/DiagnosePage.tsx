@@ -1,13 +1,20 @@
-import { useState, useRef, useCallback } from 'react';
-import { Camera, Upload, Loader2, Volume2, ChevronLeft, AlertTriangle, Check, Leaf, Sparkles, TrendingUp } from 'lucide-react';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { Camera, Upload, Loader2, Volume2, ChevronLeft, AlertTriangle, Check, Leaf, Sparkles, TrendingUp, HelpCircle } from 'lucide-react';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
 type AnalysisStep = 'capture' | 'analyzing' | 'result';
+
+interface Crop {
+  id: string;
+  name: string;
+  name_local: string | null;
+}
 
 interface AnalysisResult {
   is_healthy: boolean;
@@ -34,8 +41,31 @@ export default function DiagnosePage() {
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [isReading, setIsReading] = useState(false);
+  const [crops, setCrops] = useState<Crop[]>([]);
+  const [selectedCrop, setSelectedCrop] = useState<string>('auto');
+  const [loadingCrops, setLoadingCrops] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch crops from database
+  useEffect(() => {
+    const fetchCrops = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('crops')
+          .select('id, name, name_local')
+          .order('name');
+        
+        if (error) throw error;
+        setCrops(data || []);
+      } catch (error) {
+        console.error('Error fetching crops:', error);
+      } finally {
+        setLoadingCrops(false);
+      }
+    };
+    fetchCrops();
+  }, []);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -58,10 +88,18 @@ export default function DiagnosePage() {
     setStep('analyzing');
     
     try {
+      // Find selected crop name if not auto
+      let userSpecifiedCrop: string | undefined;
+      if (selectedCrop !== 'auto') {
+        const crop = crops.find(c => c.id === selectedCrop);
+        userSpecifiedCrop = crop?.name;
+      }
+
       const { data, error } = await supabase.functions.invoke('analyze-plant', {
         body: {
           image: imageBase64,
           language: language,
+          userSpecifiedCrop: userSpecifiedCrop,
         },
       });
 
@@ -95,6 +133,7 @@ export default function DiagnosePage() {
     setImageUrl(null);
     setImageBase64(null);
     setResult(null);
+    setSelectedCrop('auto');
   };
 
   const speakResult = () => {
@@ -195,16 +234,35 @@ export default function DiagnosePage() {
                 </Button>
               </div>
 
-              {/* AI Detection Info */}
-              <div className="p-3 rounded-xl bg-primary/5 border border-primary/10">
-                <div className="flex items-center gap-2 text-sm text-primary">
-                  <Sparkles className="w-4 h-4" />
-                  <span className="font-medium">
-                    {language === 'fr' 
-                      ? "L'IA détectera automatiquement le type de plante" 
-                      : "AI will automatically detect the plant type"}
-                  </span>
-                </div>
+              {/* Crop Selection */}
+              <div className="p-4 rounded-xl bg-card border border-border">
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  {language === 'fr' ? 'Type de plante' : 'Plant type'}
+                </label>
+                <Select value={selectedCrop} onValueChange={setSelectedCrop} disabled={loadingCrops}>
+                  <SelectTrigger className="w-full bg-background">
+                    <SelectValue placeholder={language === 'fr' ? 'Sélectionner...' : 'Select...'} />
+                  </SelectTrigger>
+                  <SelectContent className="bg-popover border border-border z-50">
+                    <SelectItem value="auto">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-primary" />
+                        <span>{language === 'fr' ? 'Détection automatique (IA)' : 'Auto-detect (AI)'}</span>
+                      </div>
+                    </SelectItem>
+                    {crops.map((crop) => (
+                      <SelectItem key={crop.id} value={crop.id}>
+                        {crop.name} {crop.name_local ? `(${crop.name_local})` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="mt-2 text-xs text-muted-foreground flex items-start gap-1.5">
+                  <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  {language === 'fr' 
+                    ? "Si vous connaissez la plante, sélectionnez-la pour un diagnostic plus précis. Sinon, laissez sur détection automatique." 
+                    : "If you know the plant, select it for a more accurate diagnosis. Otherwise, leave on auto-detect."}
+                </p>
               </div>
 
               {/* Analyze Button */}
