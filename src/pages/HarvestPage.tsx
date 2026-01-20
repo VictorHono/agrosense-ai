@@ -1,48 +1,22 @@
 import { useState, useRef, useCallback } from 'react';
-import { Camera, Upload, Loader2, ChevronLeft, TrendingUp, Star, Package, Sparkles, AlertTriangle, Leaf } from 'lucide-react';
+import { Camera, Upload, Loader2, ChevronLeft, TrendingUp, Star, Package, Sparkles, AlertTriangle, Leaf, Wheat, ShoppingCart, DollarSign, Target } from 'lucide-react';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { cn } from '@/lib/utils';
-import { supabase } from '@/integrations/supabase/client';
-import { toast } from 'sonner';
+import { useHarvestAnalysis, HarvestResult } from '@/hooks/useHarvestAnalysis';
 
 type AnalysisStep = 'capture' | 'analyzing' | 'result';
-
-interface HarvestResult {
-  is_good_quality: boolean;
-  detected_crop: string;
-  detected_crop_local?: string;
-  grade: 'A' | 'B' | 'C';
-  quality: {
-    color: number;
-    size: number;
-    defects: number;
-    uniformity: number;
-    maturity: number;
-  };
-  issues_detected?: string[];
-  recommendedUse: string[];
-  estimatedPrice: {
-    min: number;
-    max: number;
-    currency: string;
-    unit: string;
-    market: string;
-  };
-  feedback: string;
-  improvement_tips: string[];
-  storage_tips: string[];
-}
 
 export default function HarvestPage() {
   const { t, language } = useLanguage();
   const [step, setStep] = useState<AnalysisStep>('capture');
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageBase64, setImageBase64] = useState<string | null>(null);
-  const [result, setResult] = useState<HarvestResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  
+  const { analyzing, result, analyzeHarvest, reset: resetHook } = useHarvestAnalysis();
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -64,29 +38,11 @@ export default function HarvestPage() {
     
     setStep('analyzing');
     
-    try {
-      const { data, error } = await supabase.functions.invoke('analyze-harvest', {
-        body: {
-          image: imageBase64,
-          language,
-        },
-      });
-
-      if (error) throw error;
-
-      if (data?.success && data?.analysis) {
-        setResult(data.analysis);
-        setStep('result');
-      } else {
-        throw new Error(data?.error || 'Résultat inattendu');
-      }
-    } catch (error) {
-      console.error('Analysis error:', error);
-      toast.error(
-        language === 'fr' 
-          ? 'Erreur lors de l\'analyse. Veuillez réessayer.' 
-          : 'Analysis error. Please try again.'
-      );
+    const analysisResult = await analyzeHarvest(imageBase64);
+    
+    if (analysisResult) {
+      setStep('result');
+    } else {
       setStep('capture');
     }
   };
@@ -95,7 +51,7 @@ export default function HarvestPage() {
     setStep('capture');
     setImageUrl(null);
     setImageBase64(null);
-    setResult(null);
+    resetHook();
   };
 
   const gradeColors = {
@@ -108,6 +64,13 @@ export default function HarvestPage() {
     A: { fr: 'Excellente qualité - Export', en: 'Excellent quality - Export' },
     B: { fr: 'Bonne qualité - Marché local', en: 'Good quality - Local market' },
     C: { fr: 'Qualité moyenne - Transformation', en: 'Average quality - Processing' },
+  };
+
+  const yieldPotentialLabels = {
+    low: { fr: 'Faible', en: 'Low', color: 'text-destructive' },
+    medium: { fr: 'Moyen', en: 'Medium', color: 'text-warning' },
+    high: { fr: 'Élevé', en: 'High', color: 'text-success' },
+    excellent: { fr: 'Excellent', en: 'Excellent', color: 'text-primary' },
   };
 
   const QualityBar = ({ label, value, isDefect = false }: { label: string; value: number; isDefect?: boolean }) => (
@@ -174,8 +137,8 @@ export default function HarvestPage() {
                   <Sparkles className="w-4 h-4" />
                   <span className="font-medium">
                     {language === 'fr' 
-                      ? "L'IA détectera automatiquement le type de produit" 
-                      : "AI will automatically detect the product type"}
+                      ? "L'IA analysera qualité, rendement et prix" 
+                      : "AI will analyze quality, yield and price"}
                   </span>
                 </div>
               </div>
@@ -186,8 +149,13 @@ export default function HarvestPage() {
                 size="xl"
                 className="w-full"
                 onClick={handleAnalyze}
+                disabled={analyzing}
               >
-                <TrendingUp className="w-5 h-5 mr-2" />
+                {analyzing ? (
+                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                ) : (
+                  <TrendingUp className="w-5 h-5 mr-2" />
+                )}
                 {language === 'fr' ? 'Analyser la qualité' : 'Analyze quality'}
               </Button>
             </div>
@@ -201,12 +169,13 @@ export default function HarvestPage() {
                   </div>
                   <div>
                     <h3 className="font-semibold text-foreground text-sm">
-                      {language === 'fr' ? 'Comment ça marche ?' : 'How does it work?'}
+                      {language === 'fr' ? 'Analyse complète de récolte' : 'Complete harvest analysis'}
                     </h3>
                     <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-                      <li>• {language === 'fr' ? "Prenez une photo de votre récolte" : "Take a photo of your harvest"}</li>
-                      <li>• {language === 'fr' ? "L'IA détecte automatiquement le produit" : "AI automatically detects the product"}</li>
-                      <li>• {language === 'fr' ? "Recevez grade, prix et conseils" : "Get grade, price and tips"}</li>
+                      <li>• {language === 'fr' ? "Tri qualitatif pour la vente (Grade A, B, C)" : "Quality sorting for sales (Grade A, B, C)"}</li>
+                      <li>• {language === 'fr' ? "Estimation du prix sur les marchés locaux" : "Local market price estimation"}</li>
+                      <li>• {language === 'fr' ? "Estimation du rendement (pour semences)" : "Yield estimation (for seeds)"}</li>
+                      <li>• {language === 'fr' ? "Stratégie de vente optimale" : "Optimal selling strategy"}</li>
                     </ul>
                   </div>
                 </div>
@@ -270,8 +239,10 @@ export default function HarvestPage() {
           <p className="text-lg font-semibold text-foreground">
             {language === 'fr' ? 'Analyse en cours...' : 'Analyzing...'}
           </p>
-          <p className="text-sm text-muted-foreground mt-1">
-            {language === 'fr' ? 'Détection automatique du produit' : 'Automatic product detection'}
+          <p className="text-sm text-muted-foreground mt-1 text-center">
+            {language === 'fr' 
+              ? 'Qualité, rendement et prix estimés' 
+              : 'Quality, yield and price estimation'}
           </p>
         </div>
       )}
@@ -338,6 +309,12 @@ export default function HarvestPage() {
             <QualityBar label={language === 'fr' ? 'Taille' : 'Size'} value={result.quality.size} />
             <QualityBar label={language === 'fr' ? 'Uniformité' : 'Uniformity'} value={result.quality.uniformity} />
             <QualityBar label={language === 'fr' ? 'Maturité' : 'Maturity'} value={result.quality.maturity} />
+            {result.quality.moisture !== undefined && (
+              <QualityBar label={language === 'fr' ? 'Humidité' : 'Moisture'} value={result.quality.moisture} />
+            )}
+            {result.quality.cleanliness !== undefined && (
+              <QualityBar label={language === 'fr' ? 'Propreté' : 'Cleanliness'} value={result.quality.cleanliness} />
+            )}
             <QualityBar 
               label={language === 'fr' ? 'Défauts' : 'Defects'} 
               value={result.quality.defects} 
@@ -352,17 +329,73 @@ export default function HarvestPage() {
             </p>
           </div>
 
+          {/* Yield Estimation */}
+          {result.yield_estimation && (
+            <div className="p-4 rounded-xl bg-gradient-to-r from-primary/10 to-primary/5 border border-primary/20">
+              <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                <Wheat className="w-4 h-4 text-primary" />
+                {language === 'fr' ? 'Estimation du rendement' : 'Yield Estimation'}
+              </h3>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">
+                    {language === 'fr' ? 'Rendement estimé' : 'Estimated yield'}
+                  </span>
+                  <span className="font-bold text-foreground">
+                    {result.yield_estimation.estimated_yield_per_hectare}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">
+                    {language === 'fr' ? 'Potentiel' : 'Potential'}
+                  </span>
+                  <span className={cn("font-bold", yieldPotentialLabels[result.yield_estimation.yield_potential].color)}>
+                    {yieldPotentialLabels[result.yield_estimation.yield_potential][language]}
+                  </span>
+                </div>
+                {result.yield_estimation.yield_factors.length > 0 && (
+                  <div className="pt-2 border-t border-border">
+                    <p className="text-xs text-muted-foreground mb-2">
+                      {language === 'fr' ? 'Facteurs de rendement:' : 'Yield factors:'}
+                    </p>
+                    <ul className="space-y-1">
+                      {result.yield_estimation.yield_factors.map((factor, i) => (
+                        <li key={i} className="text-xs text-muted-foreground flex items-start gap-1">
+                          <span className="text-primary">•</span> {factor}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {result.yield_estimation.optimization_tips.length > 0 && (
+                  <div className="pt-2 border-t border-border">
+                    <p className="text-xs font-medium text-foreground mb-2">
+                      {language === 'fr' ? 'Optimisation:' : 'Optimization:'}
+                    </p>
+                    <ul className="space-y-1">
+                      {result.yield_estimation.optimization_tips.map((tip, i) => (
+                        <li key={i} className="text-xs text-muted-foreground flex items-start gap-1">
+                          <span className="text-success">✓</span> {tip}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Price Estimate */}
           <div className="p-4 rounded-xl bg-gradient-to-r from-accent/20 to-accent/5 border border-accent/30">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-accent/20 flex items-center justify-center">
-                <TrendingUp className="w-5 h-5 text-accent-foreground" />
+                <DollarSign className="w-5 h-5 text-accent-foreground" />
               </div>
               <div className="flex-1">
                 <h3 className="font-semibold text-foreground">{t('harvest.price')}</h3>
                 <div className="flex items-baseline gap-1 mt-1">
                   <span className="text-2xl font-bold text-accent-foreground">
-                    {result.estimatedPrice.min} - {result.estimatedPrice.max}
+                    {result.estimatedPrice.min.toLocaleString()} - {result.estimatedPrice.max.toLocaleString()}
                   </span>
                   <span className="text-sm text-muted-foreground">
                     {result.estimatedPrice.currency}/{result.estimatedPrice.unit}
@@ -374,6 +407,55 @@ export default function HarvestPage() {
               </div>
             </div>
           </div>
+
+          {/* Selling Strategy */}
+          {result.selling_strategy && (
+            <div className="p-4 rounded-xl bg-gradient-to-r from-success/10 to-success/5 border border-success/20">
+              <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                <ShoppingCart className="w-4 h-4 text-success" />
+                {language === 'fr' ? 'Stratégie de vente' : 'Selling Strategy'}
+              </h3>
+              <div className="space-y-3">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">
+                    {language === 'fr' ? 'Meilleur moment pour vendre:' : 'Best time to sell:'}
+                  </p>
+                  <p className="text-sm font-medium text-foreground">
+                    {result.selling_strategy.best_time_to_sell}
+                  </p>
+                </div>
+                {result.selling_strategy.target_buyers.length > 0 && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      {language === 'fr' ? 'Acheteurs cibles:' : 'Target buyers:'}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {result.selling_strategy.target_buyers.map((buyer, i) => (
+                        <span key={i} className="px-2 py-1 bg-success/10 text-success text-xs rounded-full flex items-center gap-1">
+                          <Target className="w-3 h-3" />
+                          {buyer}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {result.selling_strategy.negotiation_tips.length > 0 && (
+                  <div className="pt-2 border-t border-border">
+                    <p className="text-xs font-medium text-foreground mb-2">
+                      {language === 'fr' ? 'Conseils de négociation:' : 'Negotiation tips:'}
+                    </p>
+                    <ul className="space-y-1">
+                      {result.selling_strategy.negotiation_tips.map((tip, i) => (
+                        <li key={i} className="text-xs text-muted-foreground flex items-start gap-1">
+                          <span className="text-success">💡</span> {tip}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Recommended Use */}
           <div className="p-4 rounded-xl bg-card border border-border">
