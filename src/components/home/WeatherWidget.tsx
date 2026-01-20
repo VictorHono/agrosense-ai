@@ -141,7 +141,7 @@ export function WeatherWidget() {
   // Permission denied (or unsupported) AND no position => offer manual fallback
   if ((!hasPermission || permissionDenied || geoError?.code === 0) && !position && !geoLoading) {
     return (
-      <div className="p-4 rounded-2xl bg-gradient-to-br from-warning/20 to-warning/5 border border-warning/20">
+      <div data-testid="weather-widget" className="p-4 rounded-2xl bg-gradient-to-br from-warning/20 to-warning/5 border border-warning/20">
         <div className="flex items-start gap-3">
           <AlertTriangle className="w-5 h-5 text-warning shrink-0 mt-0.5" />
           <div className="flex-1">
@@ -197,7 +197,7 @@ export function WeatherWidget() {
   // Show loading state
   if (geoLoading || (loading && !weather)) {
     return (
-      <div className="p-4 rounded-2xl bg-gradient-to-br from-info/20 to-info/5 border border-info/20">
+      <div data-testid="weather-widget" className="p-4 rounded-2xl bg-gradient-to-br from-info/20 to-info/5 border border-info/20">
         <div className="flex items-center justify-center gap-2 py-4">
           <Loader2 className="w-5 h-5 text-info animate-spin" />
           <span className="text-sm text-muted-foreground">
@@ -249,7 +249,7 @@ export function WeatherWidget() {
   if (!weather) return null;
 
   return (
-    <div className="p-4 rounded-2xl bg-gradient-to-br from-info/20 to-info/5 border border-info/20">
+    <div data-testid="weather-widget" className="relative p-4 rounded-2xl bg-gradient-to-br from-info/20 to-info/5 border border-info/20">
       <div className="flex items-center justify-between">
         {/* Main Weather */}
         <div className="flex items-center gap-3">
