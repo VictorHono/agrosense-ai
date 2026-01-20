@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { Camera, Upload, Loader2, Volume2, ChevronLeft, AlertTriangle, Check, Leaf, Sparkles, TrendingUp, HelpCircle, RefreshCw } from 'lucide-react';
+import { useRef, useState, useEffect } from 'react';
+import { Camera, Upload, Loader2, Volume2, ChevronLeft, AlertTriangle, Check, Leaf, Sparkles, TrendingUp, HelpCircle, RefreshCw, Save, Zap, BookOpen, Timer } from 'lucide-react';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -9,12 +9,26 @@ import { toast } from 'sonner';
 import { useDiagnosis } from '@/hooks/useDiagnosis';
 import { CompressionIndicator } from '@/components/diagnose/CompressionIndicator';
 import { NetworkStatus, OnlineIndicator } from '@/components/diagnose/NetworkStatus';
+import { ConfidenceGauge } from '@/components/diagnose/ConfidenceGauge';
+import { SeverityScore } from '@/components/diagnose/SeverityScore';
+import { ActionChecklist } from '@/components/diagnose/ActionChecklist';
+import { ShareDiagnosis } from '@/components/diagnose/ShareDiagnosis';
+import { DiagnosisHistory, saveDiagnosisToHistory } from '@/components/diagnose/DiagnosisHistory';
+import { SimilarCases } from '@/components/diagnose/SimilarCases';
+import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
+import { useGeolocationContext } from '@/contexts/GeolocationContext';
 
 export default function DiagnosePage() {
   const { t, language } = useLanguage();
+  const { user } = useAuth();
+  const { locationInfo } = useGeolocationContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const [isReading, setIsReading] = useState(false);
+  const [actionProgress, setActionProgress] = useState(0);
+  const [analysisTime, setAnalysisTime] = useState<number | null>(null);
+  const analysisStartRef = useRef<number | null>(null);
 
   const {
     step,
@@ -38,9 +52,48 @@ export default function DiagnosePage() {
     clearImage,
   } = useDiagnosis(language);
 
+  // Track analysis time
+  useEffect(() => {
+    if (step === 'analyzing') {
+      analysisStartRef.current = Date.now();
+    } else if (step === 'result' && analysisStartRef.current) {
+      setAnalysisTime(Math.round((Date.now() - analysisStartRef.current) / 1000));
+      analysisStartRef.current = null;
+    }
+  }, [step]);
+
+  // Save to history when result is received
+  useEffect(() => {
+    if (step === 'result' && result && imageUrl) {
+      saveDiagnosisToHistory(imageUrl, result);
+      logDiagnosisActivity();
+    }
+  }, [step, result, imageUrl]);
+
+  const logDiagnosisActivity = async () => {
+    if (!user || !result) return;
+    
+    try {
+      await supabase.from('user_activity').insert([{
+        user_id: user.id,
+        activity_type: 'diagnosis',
+        metadata: {
+          crop: result.detected_crop,
+          disease_name: result.disease_name,
+          is_healthy: result.is_healthy,
+          severity: result.severity,
+          confidence: result.confidence,
+          region: locationInfo?.regionName,
+        },
+      }]);
+    } catch (err) {
+      console.error('Failed to log activity:', err);
+    }
+  };
+
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    e.target.value = ''; // Allow re-selection
+    e.target.value = '';
     if (file) {
       await handleFileSelect(file);
     }
@@ -102,22 +155,6 @@ export default function DiagnosePage() {
     window.speechSynthesis.speak(utterance);
   };
 
-  const severityColors = {
-    healthy: 'bg-success/10 text-success border-success/30',
-    low: 'bg-warning/10 text-warning border-warning/30',
-    medium: 'bg-warning/10 text-warning border-warning/30',
-    high: 'bg-destructive/10 text-destructive border-destructive/30',
-    critical: 'bg-destructive text-destructive-foreground border-destructive',
-  };
-
-  const severityLabels = {
-    healthy: { fr: 'Plante saine', en: 'Healthy plant' },
-    low: { fr: 'Faible', en: 'Low' },
-    medium: { fr: 'Moyen', en: 'Medium' },
-    high: { fr: 'Élevé', en: 'High' },
-    critical: { fr: 'Critique', en: 'Critical' },
-  };
-
   return (
     <PageContainer title={t('disease.title')}>
       {/* Network status banner */}
@@ -146,17 +183,18 @@ export default function DiagnosePage() {
         <div className="space-y-6 fade-in">
           {imageUrl ? (
             <div className="space-y-4">
-              {/* Image preview */}
-              <div className="relative aspect-square rounded-2xl overflow-hidden bg-muted">
+              {/* Image preview with enhanced styling */}
+              <div className="relative aspect-square rounded-2xl overflow-hidden bg-muted shadow-lg">
                 <img 
                   src={imageUrl} 
                   alt="Captured plant" 
                   className="w-full h-full object-cover"
                 />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
                 <Button
                   variant="secondary"
                   size="sm"
-                  className="absolute top-3 right-3"
+                  className="absolute top-3 right-3 backdrop-blur-sm"
                   onClick={clearImage}
                   disabled={isCompressing}
                 >
@@ -166,6 +204,18 @@ export default function DiagnosePage() {
                 {/* Online indicator */}
                 <div className="absolute top-3 left-3 bg-background/80 backdrop-blur-sm px-2 py-1 rounded-full">
                   <OnlineIndicator isOnline={isOnline} language={language} />
+                </div>
+
+                {/* Quick tips overlay */}
+                <div className="absolute bottom-3 left-3 right-3">
+                  <div className="flex items-center gap-2 text-white/90 text-xs bg-black/30 backdrop-blur-sm rounded-lg px-3 py-2">
+                    <Zap className="w-3 h-3" />
+                    <span>
+                      {language === 'fr' 
+                        ? 'Assurez-vous que la partie malade est bien visible' 
+                        : 'Make sure the affected part is clearly visible'}
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -178,10 +228,11 @@ export default function DiagnosePage() {
                 />
               )}
 
-              {/* Crop Selection - only show when ready */}
+              {/* Crop Selection - enhanced design */}
               {isReady && (
-                <div className="p-4 rounded-xl bg-card border border-border">
-                  <label className="block text-sm font-medium text-foreground mb-2">
+                <div className="p-4 rounded-xl bg-gradient-to-br from-primary/5 to-primary/10 border border-primary/20">
+                  <label className="block text-sm font-medium text-foreground mb-2 flex items-center gap-2">
+                    <Leaf className="w-4 h-4 text-primary" />
                     {language === 'fr' ? 'Type de plante' : 'Plant type'}
                   </label>
                   <Select value={selectedCrop} onValueChange={setSelectedCrop} disabled={loadingCrops}>
@@ -211,14 +262,15 @@ export default function DiagnosePage() {
                 </div>
               )}
 
-              {/* Analyze Button */}
+              {/* Analyze Button - enhanced */}
               <Button
                 variant="forest"
                 size="xl"
-                className="w-full"
+                className="w-full relative overflow-hidden group"
                 onClick={handleAnalyze}
                 disabled={!isReady || isCompressing || !isOnline}
               >
+                <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
                 {isCompressing ? (
                   <>
                     <Loader2 className="w-5 h-5 mr-2 animate-spin" />
@@ -231,59 +283,86 @@ export default function DiagnosePage() {
                   </>
                 ) : (
                   <>
-                    <Camera className="w-5 h-5 mr-2" />
-                    {language === 'fr' ? 'Analyser la plante' : 'Analyze plant'}
+                    <Sparkles className="w-5 h-5 mr-2" />
+                    {language === 'fr' ? 'Lancer le diagnostic IA' : 'Start AI diagnosis'}
                   </>
                 )}
               </Button>
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Instructions */}
-              <div className="p-4 rounded-2xl bg-primary/5 border border-primary/10">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                    <Leaf className="w-5 h-5 text-primary" />
+              {/* Enhanced Instructions */}
+              <div className="p-5 rounded-2xl bg-gradient-to-br from-primary/5 via-primary/10 to-accent/5 border border-primary/10">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-primary/20 flex items-center justify-center shrink-0">
+                    <Leaf className="w-6 h-6 text-primary" />
                   </div>
                   <div className="flex-1">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-semibold text-foreground text-sm">
-                        {language === 'fr' ? 'Comment ça marche ?' : 'How does it work?'}
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-bold text-foreground">
+                        {language === 'fr' ? 'Diagnostic intelligent' : 'Smart diagnosis'}
                       </h3>
                       <OnlineIndicator isOnline={isOnline} language={language} />
                     </div>
-                    <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-                      <li>• {language === 'fr' ? "Prenez une photo de votre plante" : "Take a photo of your plant"}</li>
-                      <li>• {language === 'fr' ? "L'IA détecte automatiquement le type de culture" : "AI automatically detects the crop type"}</li>
-                      <li>• {language === 'fr' ? "Recevez un diagnostic complet avec conseils" : "Get a complete diagnosis with advice"}</li>
+                    <ul className="space-y-2 text-sm text-muted-foreground">
+                      <li className="flex items-center gap-2">
+                        <Camera className="w-4 h-4 text-primary shrink-0" />
+                        {language === 'fr' ? "Photo de votre plante" : "Photo of your plant"}
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-primary shrink-0" />
+                        {language === 'fr' ? "Détection automatique par IA" : "AI auto-detection"}
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <BookOpen className="w-4 h-4 text-primary shrink-0" />
+                        {language === 'fr' ? "Traitements locaux recommandés" : "Local treatments recommended"}
+                      </li>
                     </ul>
                   </div>
                 </div>
               </div>
 
-              {/* Camera/Upload Buttons */}
+              {/* Camera/Upload Buttons - enhanced */}
               <div className="grid grid-cols-2 gap-4">
                 <Button
                   variant="forest"
                   size="lg"
-                  className="h-32 flex-col gap-2"
+                  className="h-36 flex-col gap-3 relative overflow-hidden group"
                   onClick={() => cameraInputRef.current?.click()}
                   disabled={!isOnline}
                 >
-                  <Camera className="w-8 h-8" />
-                  <span>{t('disease.take_photo')}</span>
+                  <span className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent" />
+                  <div className="w-14 h-14 rounded-full bg-white/20 flex items-center justify-center">
+                    <Camera className="w-7 h-7" />
+                  </div>
+                  <span className="font-medium">{t('disease.take_photo')}</span>
                 </Button>
                 <Button
                   variant="outline"
                   size="lg"
-                  className="h-32 flex-col gap-2"
+                  className="h-36 flex-col gap-3 border-2 border-dashed hover:border-primary hover:bg-primary/5 transition-all"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={!isOnline}
                 >
-                  <Upload className="w-8 h-8" />
-                  <span>{t('disease.upload')}</span>
+                  <div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center">
+                    <Upload className="w-7 h-7" />
+                  </div>
+                  <span className="font-medium">{t('disease.upload')}</span>
                 </Button>
               </div>
+
+              {/* Diagnosis History */}
+              <DiagnosisHistory 
+                language={language}
+                onSelect={(entry) => {
+                  // Could implement viewing historical results
+                  toast.info(
+                    language === 'fr' 
+                      ? `Diagnostic: ${entry.result.detected_crop}` 
+                      : `Diagnosis: ${entry.result.detected_crop}`
+                  );
+                }}
+              />
 
               {/* Hidden file inputs */}
               <input
@@ -306,59 +385,79 @@ export default function DiagnosePage() {
         </div>
       )}
 
-      {/* ANALYZING STEP */}
+      {/* ANALYZING STEP - enhanced animation */}
       {step === 'analyzing' && (
         <div className="flex flex-col items-center justify-center py-12 fade-in">
-          <div className="relative w-48 h-48 mb-6">
+          <div className="relative w-56 h-56 mb-8">
             <img 
               src={imageUrl!} 
               alt="Analyzing" 
-              className="w-full h-full object-cover rounded-2xl"
+              className="w-full h-full object-cover rounded-2xl shadow-lg"
             />
+            {/* Scanning effect */}
             <div className="absolute inset-0 overflow-hidden rounded-2xl">
-              <div className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-primary to-transparent scan-line" />
+              <div className="absolute inset-x-0 h-2 bg-gradient-to-r from-transparent via-primary to-transparent opacity-80 scan-line" />
             </div>
+            {/* Pulse overlay */}
             <div className="absolute inset-0 bg-primary/10 rounded-2xl animate-pulse" />
+            {/* Corner decorations */}
+            <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-primary rounded-tl-lg" />
+            <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-primary rounded-tr-lg" />
+            <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-primary rounded-bl-lg" />
+            <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-primary rounded-br-lg" />
           </div>
-          <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
-          <p className="text-lg font-semibold text-foreground">{t('disease.analyzing')}</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            {retryCount > 0 
-              ? (language === 'fr' ? `Tentative ${retryCount}/${maxRetries}...` : `Attempt ${retryCount}/${maxRetries}...`)
-              : (language === 'fr' ? 'Analyse IA en cours...' : 'AI analysis in progress...')
-            }
-          </p>
+          
+          <div className="flex flex-col items-center">
+            <Loader2 className="w-10 h-10 text-primary animate-spin mb-4" />
+            <p className="text-xl font-bold text-foreground">{t('disease.analyzing')}</p>
+            <p className="text-sm text-muted-foreground mt-2">
+              {retryCount > 0 
+                ? (language === 'fr' ? `Tentative ${retryCount}/${maxRetries}...` : `Attempt ${retryCount}/${maxRetries}...`)
+                : (language === 'fr' ? 'Intelligence artificielle en action...' : 'AI in action...')
+              }
+            </p>
+            
+            {/* Analysis steps indicator */}
+            <div className="flex items-center gap-3 mt-6">
+              {['detection', 'analysis', 'treatment'].map((s, i) => (
+                <div key={s} className="flex items-center gap-1">
+                  <div className={cn(
+                    "w-2 h-2 rounded-full",
+                    i === 0 ? "bg-primary animate-pulse" : "bg-muted"
+                  )} />
+                  <span className="text-xs text-muted-foreground">
+                    {language === 'fr' 
+                      ? ['Détection', 'Analyse', 'Traitement'][i]
+                      : ['Detection', 'Analysis', 'Treatment'][i]
+                    }
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
-      {/* RESULT STEP */}
+      {/* RESULT STEP - completely redesigned */}
       {step === 'result' && result && (
         <div className="space-y-4 fade-in">
-          {/* Main Result Card */}
-          <div className="p-5 rounded-2xl bg-card border border-border shadow-lg">
+          {/* Main Result Card - redesigned */}
+          <div className="p-6 rounded-2xl bg-card border border-border shadow-xl">
             <div className="flex items-start gap-4">
-              <div className="w-20 h-20 rounded-xl overflow-hidden shrink-0">
-                <img 
-                  src={imageUrl!} 
-                  alt="Analyzed plant" 
-                  className="w-full h-full object-cover"
-                />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className={cn(
-                  "inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border mb-2",
-                  severityColors[result.severity || 'healthy']
-                )}>
-                  {result.is_healthy ? (
-                    <Check className="w-3 h-3" />
-                  ) : (
-                    <AlertTriangle className="w-3 h-3" />
-                  )}
-                  {severityLabels[result.severity || 'healthy'][language]}
+              {/* Image with confidence gauge */}
+              <div className="relative">
+                <div className="w-24 h-24 rounded-xl overflow-hidden shadow-md">
+                  <img 
+                    src={imageUrl!} 
+                    alt="Analyzed plant" 
+                    className="w-full h-full object-cover"
+                  />
                 </div>
-                
-                {/* Detected crop */}
-                <h2 className="text-lg font-bold text-foreground">
+              </div>
+              
+              <div className="flex-1 min-w-0">
+                {/* Crop name */}
+                <h2 className="text-xl font-bold text-foreground">
                   {result.detected_crop}
                 </h2>
                 {result.detected_crop_local && (
@@ -367,31 +466,41 @@ export default function DiagnosePage() {
                 
                 {/* Disease name if sick */}
                 {!result.is_healthy && result.disease_name && (
-                  <div className="mt-2 p-2 rounded-lg bg-destructive/5 border border-destructive/20">
-                    <p className="text-sm font-medium text-destructive">
+                  <div className="mt-2 p-2 rounded-lg bg-destructive/10 border border-destructive/20">
+                    <p className="text-sm font-semibold text-destructive flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4" />
                       {result.disease_name}
                     </p>
                     {result.local_name && (
-                      <p className="text-xs text-muted-foreground">{result.local_name}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{result.local_name}</p>
                     )}
                   </div>
                 )}
-                
-                <div className="mt-2 flex items-center gap-2">
-                  <div className="h-1.5 flex-1 bg-muted rounded-full overflow-hidden">
-                    <div 
-                      className={cn(
-                        "h-full rounded-full",
-                        result.is_healthy ? "bg-success" : "bg-primary"
-                      )}
-                      style={{ width: `${result.confidence}%` }}
-                    />
+
+                {/* Analysis time badge */}
+                {analysisTime && (
+                  <div className="flex items-center gap-1 mt-2 text-xs text-muted-foreground">
+                    <Timer className="w-3 h-3" />
+                    {language === 'fr' ? `Analysé en ${analysisTime}s` : `Analyzed in ${analysisTime}s`}
                   </div>
-                  <span className="text-xs text-muted-foreground">{result.confidence}%</span>
-                </div>
+                )}
               </div>
+
+              {/* Confidence gauge */}
+              <ConfidenceGauge 
+                confidence={result.confidence} 
+                size="sm" 
+                language={language} 
+              />
             </div>
           </div>
+
+          {/* Severity Score */}
+          <SeverityScore 
+            severity={result.severity || 'healthy'} 
+            language={language}
+            size="md"
+          />
 
           {/* Description */}
           <div className="p-4 rounded-xl bg-card border border-border">
@@ -400,42 +509,56 @@ export default function DiagnosePage() {
             </p>
           </div>
 
-          {/* Listen Button */}
-          <Button 
-            variant="harvest" 
-            className="w-full" 
-            size="lg"
-            onClick={speakResult}
-            disabled={isReading}
-          >
-            <Volume2 className={cn("w-5 h-5 mr-2", isReading && "animate-pulse")} />
-            {isReading 
-              ? (language === 'fr' ? 'Lecture en cours...' : 'Reading...') 
-              : t('disease.listen')}
-          </Button>
+          {/* Action buttons row */}
+          <div className="flex gap-2">
+            <Button 
+              variant="harvest" 
+              className="flex-1" 
+              size="lg"
+              onClick={speakResult}
+              disabled={isReading}
+            >
+              <Volume2 className={cn("w-5 h-5 mr-2", isReading && "animate-pulse")} />
+              {isReading 
+                ? (language === 'fr' ? 'Lecture...' : 'Reading...') 
+                : t('disease.listen')}
+            </Button>
+          </div>
+
+          {/* Share options */}
+          <ShareDiagnosis 
+            result={result} 
+            imageUrl={imageUrl!} 
+            language={language} 
+          />
+
+          {/* Similar cases - for sick plants */}
+          {!result.is_healthy && result.disease_name && (
+            <SimilarCases 
+              diseaseName={result.disease_name}
+              cropName={result.detected_crop}
+              language={language}
+            />
+          )}
 
           {/* HEALTHY PLANT: Maintenance and Improvement Tips */}
           {result.is_healthy && (
             <>
-              {/* Maintenance Tips */}
               {result.maintenance_tips && result.maintenance_tips.length > 0 && (
                 <div className="p-4 rounded-xl bg-success/5 border border-success/20">
                   <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
                     <Leaf className="w-4 h-4 text-success" />
                     {language === 'fr' ? "Conseils d'entretien" : 'Maintenance Tips'}
                   </h3>
-                  <ul className="space-y-2">
-                    {result.maintenance_tips.map((tip, i) => (
-                      <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
-                        <Check className="w-4 h-4 text-success shrink-0 mt-0.5" />
-                        {tip}
-                      </li>
-                    ))}
-                  </ul>
+                  <ActionChecklist 
+                    actions={result.maintenance_tips}
+                    diseaseId={`healthy-${result.detected_crop}`}
+                    language={language}
+                    onProgressChange={setActionProgress}
+                  />
                 </div>
               )}
 
-              {/* Yield Improvement Tips */}
               {result.yield_improvement_tips && result.yield_improvement_tips.length > 0 && (
                 <div className="p-4 rounded-xl bg-primary/5 border border-primary/20">
                   <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
@@ -460,6 +583,25 @@ export default function DiagnosePage() {
           {/* SICK PLANT: Symptoms, Causes, Treatments */}
           {!result.is_healthy && (
             <>
+              {/* Interactive Action Checklist for treatments */}
+              {(result.biological_treatments?.length || result.chemical_treatments?.length) && (
+                <div className="p-4 rounded-xl bg-card border border-border">
+                  <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <Check className="w-4 h-4 text-success" />
+                    {t('disease.treatments')}
+                  </h3>
+                  <ActionChecklist 
+                    actions={[
+                      ...(result.biological_treatments || []).map(t => `🌿 ${t}`),
+                      ...(result.chemical_treatments || []).map(t => `💊 ${t}`),
+                    ]}
+                    diseaseId={result.disease_name}
+                    language={language}
+                    onProgressChange={setActionProgress}
+                  />
+                </div>
+              )}
+
               {/* Symptoms */}
               {result.symptoms && result.symptoms.length > 0 && (
                 <div className="p-4 rounded-xl bg-card border border-border">
@@ -495,47 +637,6 @@ export default function DiagnosePage() {
                   </ul>
                 </div>
               )}
-
-              {/* Treatments */}
-              <div className="p-4 rounded-xl bg-card border border-border">
-                <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
-                  <Check className="w-4 h-4 text-success" />
-                  {t('disease.treatments')}
-                </h3>
-                <div className="space-y-3">
-                  {/* Biological treatments */}
-                  {result.biological_treatments && result.biological_treatments.length > 0 && (
-                    <div className="p-3 rounded-lg border bg-success/5 border-success/20">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-[10px] font-medium uppercase px-1.5 py-0.5 rounded bg-success/10 text-success">
-                          {language === 'fr' ? 'Biologique' : 'Biological'}
-                        </span>
-                      </div>
-                      <ul className="space-y-1">
-                        {result.biological_treatments.map((treatment, i) => (
-                          <li key={i} className="text-sm text-foreground">{treatment}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {/* Chemical treatments */}
-                  {result.chemical_treatments && result.chemical_treatments.length > 0 && (
-                    <div className="p-3 rounded-lg border bg-info/5 border-info/20">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-[10px] font-medium uppercase px-1.5 py-0.5 rounded bg-info/10 text-info">
-                          {language === 'fr' ? 'Chimique' : 'Chemical'}
-                        </span>
-                      </div>
-                      <ul className="space-y-1">
-                        {result.chemical_treatments.map((treatment, i) => (
-                          <li key={i} className="text-sm text-foreground">{treatment}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              </div>
             </>
           )}
 
