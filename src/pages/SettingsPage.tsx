@@ -1,21 +1,43 @@
-import { Globe, MapPin, Bell, Volume2, Smartphone, ChevronRight, LogOut, Shield, Navigation } from 'lucide-react';
+import { useState } from 'react';
+import { Globe, Bell, Volume2, Smartphone, ChevronRight, LogOut, Shield, Navigation, Edit } from 'lucide-react';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { LocationSettings } from '@/components/settings/LocationSettings';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useGeolocationContext } from '@/contexts/GeolocationContext';
+import { useAuth } from '@/contexts/AuthContext';
+import { useProfile } from '@/hooks/useProfile';
+import { ProfileCard } from '@/components/profile/ProfileCard';
+import { EditProfileDialog } from '@/components/profile/EditProfileDialog';
+import { toast } from 'sonner';
 
 export default function SettingsPage() {
   const { t, language, setLanguage } = useLanguage();
+  const { signOut, isAdmin } = useAuth();
+  const { profile, loading: profileLoading, refreshProfile } = useProfile();
+  const navigate = useNavigate();
+  
   const [notifications, setNotifications] = useState(true);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [dataSaver, setDataSaver] = useState(false);
   const [locationOpen, setLocationOpen] = useState(false);
+  const [editProfileOpen, setEditProfileOpen] = useState(false);
+  
   const { positionSource, locationInfo } = useGeolocationContext();
+
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      toast.success('Déconnexion réussie');
+      navigate('/auth');
+    } catch (error) {
+      console.error('Logout error:', error);
+      toast.error('Erreur lors de la déconnexion');
+    }
+  };
 
   const SettingRow = ({ 
     icon: Icon, 
@@ -41,20 +63,29 @@ export default function SettingsPage() {
     <PageContainer title={t('settings.title')}>
       <div className="space-y-6 fade-in">
         {/* User Profile Card */}
-        <div className="p-4 rounded-2xl bg-gradient-to-r from-primary/10 to-primary/5 border border-primary/20">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xl font-bold">
-              👨🏾‍🌾
-            </div>
-            <div className="flex-1">
-              <h3 className="font-bold text-foreground">Agriculteur</h3>
-              <p className="text-sm text-muted-foreground">+237 6XX XXX XXX</p>
-            </div>
-            <Button variant="ghost" size="icon">
-              <ChevronRight className="w-5 h-5" />
-            </Button>
-          </div>
+        <div className="relative">
+          <ProfileCard 
+            profile={profile} 
+            onProfileUpdate={refreshProfile}
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute top-1/2 right-4 -translate-y-1/2"
+            onClick={() => setEditProfileOpen(true)}
+            disabled={profileLoading}
+          >
+            <Edit className="w-5 h-5 text-muted-foreground" />
+          </Button>
         </div>
+
+        {/* Edit Profile Dialog */}
+        <EditProfileDialog
+          open={editProfileOpen}
+          onOpenChange={setEditProfileOpen}
+          profile={profile}
+          onProfileUpdate={refreshProfile}
+        />
 
         {/* Main Settings */}
         <div className="rounded-2xl bg-card border border-border p-4">
@@ -137,19 +168,21 @@ export default function SettingsPage() {
           </SettingRow>
         </div>
 
-        {/* Admin Link */}
-        <Link 
-          to="/admin" 
-          className="flex items-center justify-between p-4 rounded-2xl bg-card border border-border hover:border-primary/30 transition-colors"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Shield className="w-4 h-4 text-primary" />
+        {/* Admin Link - Only show for admins */}
+        {isAdmin && (
+          <Link 
+            to="/admin" 
+            className="flex items-center justify-between p-4 rounded-2xl bg-card border border-border hover:border-primary/30 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+                <Shield className="w-4 h-4 text-primary" />
+              </div>
+              <span className="font-medium text-foreground">Espace Administrateur</span>
             </div>
-            <span className="font-medium text-foreground">Espace Administrateur</span>
-          </div>
-          <ChevronRight className="w-5 h-5 text-muted-foreground" />
-        </Link>
+            <ChevronRight className="w-5 h-5 text-muted-foreground" />
+          </Link>
+        )}
 
         {/* Help & Support */}
         <div className="rounded-2xl bg-card border border-border p-4">
@@ -171,7 +204,11 @@ export default function SettingsPage() {
         </div>
 
         {/* Logout */}
-        <Button variant="outline" className="w-full text-destructive border-destructive/30 hover:bg-destructive/10">
+        <Button 
+          variant="outline" 
+          className="w-full text-destructive border-destructive/30 hover:bg-destructive/10"
+          onClick={handleLogout}
+        >
           <LogOut className="w-4 h-4 mr-2" />
           Déconnexion
         </Button>
