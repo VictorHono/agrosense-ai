@@ -5,3 +5,21 @@ verify_jwt = false
 
 [functions.sync-learning-to-database]
 verify_jwt = false
+
+[functions.translate-content]
+verify_jwt = false
+
+[functions.get-tips]
+verify_jwt = false
+
+[functions.get-alerts]
+verify_jwt = false
+
+[functions.get-weather]
+verify_jwt = false
+
+[functions.chat-assistant]
+verify_jwt = false
+
+[functions.analyze-harvest]
+verify_jwt = false

@@ -1,4 +1,4 @@
-import { Bell, Wifi, WifiOff, User, Shield } from 'lucide-react';
+import { Bell, Wifi, WifiOff, User, Shield, Globe, Check } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 
@@ -19,7 +20,7 @@ interface HeaderProps {
 }
 
 export function Header({ title, showNotifications = true }: HeaderProps) {
-  const { language, setLanguage } = useLanguage();
+  const { language, setLanguage, availableLanguages, currentLanguageInfo } = useLanguage();
   const { user, isAdmin, signOut, loading } = useAuth();
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
@@ -42,6 +43,14 @@ export function Header({ title, showNotifications = true }: HeaderProps) {
       toast.success('Déconnexion réussie');
     } catch (error) {
       toast.error('Erreur lors de la déconnexion');
+    }
+  };
+
+  const handleLanguageChange = (langCode: string) => {
+    setLanguage(langCode);
+    const lang = availableLanguages.find(l => l.code === langCode);
+    if (lang) {
+      toast.success(`Langue changée: ${lang.native_name}`);
     }
   };
 
@@ -73,15 +82,42 @@ export function Header({ title, showNotifications = true }: HeaderProps) {
             )}
           </div>
 
-          {/* Language Toggle */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setLanguage(language === 'fr' ? 'en' : 'fr')}
-            className="text-xs font-semibold px-2"
-          >
-            {language.toUpperCase()}
-          </Button>
+          {/* Language Selector */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="gap-1 px-2">
+                <span className="text-base">{currentLanguageInfo?.flag || '🌍'}</span>
+                <span className="text-xs font-semibold hidden sm:inline">
+                  {currentLanguageInfo?.native_name || language.toUpperCase()}
+                </span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel className="flex items-center gap-2">
+                <Globe className="w-4 h-4" />
+                Choisir la langue
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {availableLanguages.map((lang) => (
+                <DropdownMenuItem
+                  key={lang.code}
+                  onClick={() => handleLanguageChange(lang.code)}
+                  className="flex items-center justify-between cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">{lang.flag}</span>
+                    <div>
+                      <p className="font-medium">{lang.native_name}</p>
+                      <p className="text-xs text-muted-foreground">{lang.name}</p>
+                    </div>
+                  </div>
+                  {language === lang.code && (
+                    <Check className="w-4 h-4 text-primary" />
+                  )}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           {/* Notifications */}
           {showNotifications && (
