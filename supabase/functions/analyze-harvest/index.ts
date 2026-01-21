@@ -30,7 +30,6 @@ interface HarvestResult {
     unit: string;
     market: string;
   };
-  // Yield estimation for seeds/grains
   yield_estimation?: {
     estimated_yield_per_hectare: string;
     yield_potential: "low" | "medium" | "high" | "excellent";
@@ -40,7 +39,6 @@ interface HarvestResult {
   feedback: string;
   improvement_tips: string[];
   storage_tips: string[];
-  // Selling strategy
   selling_strategy?: {
     best_time_to_sell: string;
     target_buyers: string[];
@@ -61,6 +59,30 @@ interface AIProvider {
   apiKey: string;
   model: string;
   isLovable: boolean;
+}
+
+// Language configuration for multilingual AI responses
+const languageConfig: { [key: string]: { name: string; instruction: string } } = {
+  fr: { name: "French", instruction: "Réponds entièrement en français." },
+  en: { name: "English", instruction: "Respond entirely in English." },
+  ghomala: { name: "Ghomala", instruction: "Respond in Ghomala (Ghɔmálá') language. Use Ghomala vocabulary and expressions. If you don't know exact Ghomala words, use French words that are commonly understood." },
+  ewondo: { name: "Ewondo", instruction: "Respond in Ewondo language. Use Ewondo vocabulary and expressions." },
+  fulfulde: { name: "Fulfulde", instruction: "Respond in Fulfulde language. Use Fulfulde vocabulary and expressions." },
+  duala: { name: "Duala", instruction: "Respond in Duala (Douala) language. Use Duala vocabulary and expressions." },
+  basaa: { name: "Basaa", instruction: "Respond in Basaa language. Use Basaa vocabulary and expressions." },
+  bamileke: { name: "Bamileke", instruction: "Respond in Bamileke language. Use Bamileke vocabulary and expressions." },
+};
+
+function getLanguageInstruction(language: string): string {
+  const config = languageConfig[language];
+  if (config) return config.instruction;
+  return languageConfig.fr.instruction; // Default to French
+}
+
+function getLanguageName(language: string): string {
+  const config = languageConfig[language];
+  if (config) return config.name;
+  return "French";
 }
 
 function getAIProviders(): AIProvider[] {
@@ -100,7 +122,6 @@ function getAIProviders(): AIProvider[] {
   return providers;
 }
 
-// Fetch all crops and market prices from database
 async function fetchDatabaseContext(supabase: any): Promise<{ crops: DBCrop[]; prices: any[] }> {
   console.log("Fetching database context for crops and prices...");
 
@@ -122,20 +143,23 @@ async function fetchDatabaseContext(supabase: any): Promise<{ crops: DBCrop[]; p
   };
 }
 
-// Build comprehensive context for AI
-function buildDatabaseContext(crops: DBCrop[], prices: any[]): string {
-  let context = `--- BASE DE DONNÉES AGRICOLE CAMEROUNAISE ---\n\n`;
+function buildDatabaseContext(crops: DBCrop[], prices: any[], language: string): string {
+  const isFr = language === "fr";
   
-  context += `CULTURES ENREGISTRÉES:\n`;
+  let context = isFr 
+    ? `--- BASE DE DONNÉES AGRICOLE CAMEROUNAISE ---\n\n`
+    : `--- CAMEROONIAN AGRICULTURAL DATABASE ---\n\n`;
+  
+  context += isFr ? `CULTURES ENREGISTRÉES:\n` : `REGISTERED CROPS:\n`;
   crops.forEach(crop => {
     context += `- ${crop.name} (${crop.name_local || ""})\n`;
   });
   
-  context += `\nPRIX DU MARCHÉ RÉCENTS:\n`;
+  context += isFr ? `\nPRIX DU MARCHÉ RÉCENTS:\n` : `\nRECENT MARKET PRICES:\n`;
   const pricesByGrade: { [key: string]: any[] } = {};
   
   prices.forEach(p => {
-    const cropName = p.crops?.name || "Inconnu";
+    const cropName = p.crops?.name || (isFr ? "Inconnu" : "Unknown");
     const key = `${cropName}-${p.quality_grade}`;
     if (!pricesByGrade[key]) {
       pricesByGrade[key] = [];
@@ -144,11 +168,13 @@ function buildDatabaseContext(crops: DBCrop[], prices: any[]): string {
   });
 
   Object.entries(pricesByGrade).forEach(([key, priceList]) => {
-    const p = priceList[0]; // Most recent
-    context += `- ${p.crops?.name || "Produit"} Grade ${p.quality_grade || "A"}: ${p.price_min}-${p.price_max} ${p.currency}/${p.unit} (${p.market_name}, ${p.region})\n`;
+    const p = priceList[0];
+    context += `- ${p.crops?.name || (isFr ? "Produit" : "Product")} Grade ${p.quality_grade || "A"}: ${p.price_min}-${p.price_max} ${p.currency}/${p.unit} (${p.market_name}, ${p.region})\n`;
   });
 
-  context += `\nINSTRUCTION: Utilise ces prix comme référence principale pour tes estimations. Détecte automatiquement le type de produit agricole dans l'image.`;
+  context += isFr
+    ? `\nINSTRUCTION: Utilise ces prix comme référence principale pour tes estimations. Détecte automatiquement le type de produit agricole dans l'image.`
+    : `\nINSTRUCTION: Use these prices as main reference for your estimates. Automatically detect the agricultural product type in the image.`;
   
   return context;
 }
@@ -176,61 +202,61 @@ function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData
         type: "function",
         function: {
           name: "analyze_harvest_quality",
-          description: "Analyse automatiquement le type de récolte, sa qualité, estime le rendement et donne une stratégie de vente",
+          description: "Automatically analyzes crop type, quality, estimates yield and provides selling strategy",
           parameters: {
             type: "object",
             properties: {
-              is_good_quality: { type: "boolean", description: "True si la récolte est de bonne qualité générale" },
-              detected_crop: { type: "string", description: "Type de produit agricole détecté automatiquement" },
-              detected_crop_local: { type: "string", description: "Nom local camerounais du produit" },
-              grade: { type: "string", enum: ["A", "B", "C"], description: "Grade de qualité global" },
+              is_good_quality: { type: "boolean", description: "True if overall good quality" },
+              detected_crop: { type: "string", description: "Automatically detected agricultural product type" },
+              detected_crop_local: { type: "string", description: "Local Cameroonian name of the product" },
+              grade: { type: "string", enum: ["A", "B", "C"], description: "Overall quality grade" },
               quality: {
                 type: "object",
                 properties: {
-                  color: { type: "number", description: "Score couleur 0-100" },
-                  size: { type: "number", description: "Score taille 0-100" },
-                  defects: { type: "number", description: "Pourcentage de défauts 0-100" },
-                  uniformity: { type: "number", description: "Score uniformité 0-100" },
-                  maturity: { type: "number", description: "Score maturité 0-100" },
-                  moisture: { type: "number", description: "Estimation humidité 0-100 (important pour graines)" },
-                  cleanliness: { type: "number", description: "Score propreté/absence de débris 0-100" },
+                  color: { type: "number", description: "Color score 0-100" },
+                  size: { type: "number", description: "Size score 0-100" },
+                  defects: { type: "number", description: "Defects percentage 0-100" },
+                  uniformity: { type: "number", description: "Uniformity score 0-100" },
+                  maturity: { type: "number", description: "Maturity score 0-100" },
+                  moisture: { type: "number", description: "Moisture estimation 0-100 (important for seeds)" },
+                  cleanliness: { type: "number", description: "Cleanliness/debris-free score 0-100" },
                 },
                 required: ["color", "size", "defects", "uniformity", "maturity"],
               },
-              issues_detected: { type: "array", items: { type: "string" }, description: "Problèmes détectés sur la récolte" },
-              recommendedUse: { type: "array", items: { type: "string" }, description: "Utilisations recommandées" },
+              issues_detected: { type: "array", items: { type: "string" }, description: "Issues detected on the harvest" },
+              recommendedUse: { type: "array", items: { type: "string" }, description: "Recommended uses" },
               estimatedPrice: {
                 type: "object",
                 properties: {
-                  min: { type: "number", description: "Prix minimum estimé" },
-                  max: { type: "number", description: "Prix maximum estimé" },
-                  currency: { type: "string", description: "Devise (XAF)" },
-                  unit: { type: "string", description: "Unité (kg, sac, etc.)" },
-                  market: { type: "string", description: "Marché de référence au Cameroun" },
+                  min: { type: "number", description: "Minimum estimated price" },
+                  max: { type: "number", description: "Maximum estimated price" },
+                  currency: { type: "string", description: "Currency (XAF)" },
+                  unit: { type: "string", description: "Unit (kg, bag, etc.)" },
+                  market: { type: "string", description: "Reference market in Cameroon" },
                 },
                 required: ["min", "max", "currency", "unit", "market"],
               },
               yield_estimation: {
                 type: "object",
-                description: "Estimation du rendement pour les graines/semences",
+                description: "Yield estimation for seeds/grains",
                 properties: {
-                  estimated_yield_per_hectare: { type: "string", description: "Rendement estimé par hectare (ex: 2-3 tonnes/ha)" },
-                  yield_potential: { type: "string", enum: ["low", "medium", "high", "excellent"], description: "Potentiel de rendement" },
-                  yield_factors: { type: "array", items: { type: "string" }, description: "Facteurs affectant le rendement" },
-                  optimization_tips: { type: "array", items: { type: "string" }, description: "Conseils pour optimiser le rendement" },
+                  estimated_yield_per_hectare: { type: "string", description: "Estimated yield per hectare (e.g., 2-3 tons/ha)" },
+                  yield_potential: { type: "string", enum: ["low", "medium", "high", "excellent"], description: "Yield potential" },
+                  yield_factors: { type: "array", items: { type: "string" }, description: "Factors affecting yield" },
+                  optimization_tips: { type: "array", items: { type: "string" }, description: "Tips to optimize yield" },
                 },
                 required: ["estimated_yield_per_hectare", "yield_potential", "yield_factors", "optimization_tips"],
               },
-              feedback: { type: "string", description: "Commentaire détaillé sur la qualité" },
-              improvement_tips: { type: "array", items: { type: "string" }, description: "Conseils pour améliorer la qualité des prochaines récoltes" },
-              storage_tips: { type: "array", items: { type: "string" }, description: "Conseils de stockage et conservation" },
+              feedback: { type: "string", description: "Detailed quality feedback" },
+              improvement_tips: { type: "array", items: { type: "string" }, description: "Tips to improve future harvests" },
+              storage_tips: { type: "array", items: { type: "string" }, description: "Storage and preservation tips" },
               selling_strategy: {
                 type: "object",
-                description: "Stratégie de vente optimale",
+                description: "Optimal selling strategy",
                 properties: {
-                  best_time_to_sell: { type: "string", description: "Meilleur moment pour vendre" },
-                  target_buyers: { type: "array", items: { type: "string" }, description: "Acheteurs cibles recommandés" },
-                  negotiation_tips: { type: "array", items: { type: "string" }, description: "Conseils de négociation" },
+                  best_time_to_sell: { type: "string", description: "Best time to sell" },
+                  target_buyers: { type: "array", items: { type: "string" }, description: "Recommended target buyers" },
+                  negotiation_tips: { type: "array", items: { type: "string" }, description: "Negotiation tips" },
                 },
                 required: ["best_time_to_sell", "target_buyers", "negotiation_tips"],
               },
@@ -251,41 +277,41 @@ function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData:
     : imageData;
 
   const jsonSchema = `{
-  "is_good_quality": "boolean - true si bonne qualité générale",
-  "detected_crop": "string - Type de produit détecté automatiquement",
-  "detected_crop_local": "string - Nom local camerounais",
-  "grade": "string - A, B ou C",
+  "is_good_quality": "boolean - true if overall good quality",
+  "detected_crop": "string - Automatically detected product type",
+  "detected_crop_local": "string - Local Cameroonian name",
+  "grade": "string - A, B or C",
   "quality": {
     "color": "number 0-100",
     "size": "number 0-100",
     "defects": "number 0-100",
     "uniformity": "number 0-100",
     "maturity": "number 0-100",
-    "moisture": "number 0-100 - estimation humidité (important pour graines)",
-    "cleanliness": "number 0-100 - propreté/absence de débris"
+    "moisture": "number 0-100 - moisture estimation (important for seeds)",
+    "cleanliness": "number 0-100 - cleanliness/debris-free"
   },
-  "issues_detected": ["array - Problèmes détectés"],
+  "issues_detected": ["array - Detected issues"],
   "recommendedUse": ["array of strings"],
   "estimatedPrice": {
     "min": "number",
     "max": "number",
     "currency": "XAF",
-    "unit": "kg ou sac",
-    "market": "string - marché camerounais"
+    "unit": "kg or bag",
+    "market": "string - Cameroonian market"
   },
   "yield_estimation": {
-    "estimated_yield_per_hectare": "string - ex: 2-3 tonnes/ha",
+    "estimated_yield_per_hectare": "string - e.g., 2-3 tons/ha",
     "yield_potential": "low|medium|high|excellent",
-    "yield_factors": ["array - facteurs affectant le rendement"],
-    "optimization_tips": ["array - conseils pour optimiser le rendement"]
+    "yield_factors": ["array - factors affecting yield"],
+    "optimization_tips": ["array - tips to optimize yield"]
   },
-  "feedback": "string - commentaire détaillé",
-  "improvement_tips": ["array - Conseils amélioration prochaines récoltes"],
-  "storage_tips": ["array - Conseils stockage et conservation"],
+  "feedback": "string - detailed feedback",
+  "improvement_tips": ["array - Tips for improving future harvests"],
+  "storage_tips": ["array - Storage and preservation tips"],
   "selling_strategy": {
-    "best_time_to_sell": "string - meilleur moment pour vendre",
-    "target_buyers": ["array - acheteurs cibles recommandés"],
-    "negotiation_tips": ["array - conseils de négociation"]
+    "best_time_to_sell": "string - best time to sell",
+    "target_buyers": ["array - recommended target buyers"],
+    "negotiation_tips": ["array - negotiation tips"]
   }
 }`;
 
@@ -293,7 +319,7 @@ function buildGeminiRequest(systemPrompt: string, userPrompt: string, imageData:
     contents: [
       {
         parts: [
-          { text: `${systemPrompt}\n\n${dbContext}\n\n${userPrompt}\n\nRéponds UNIQUEMENT avec un objet JSON valide suivant ce schéma:\n${jsonSchema}` },
+          { text: `${systemPrompt}\n\n${dbContext}\n\n${userPrompt}\n\nRespond ONLY with a valid JSON object following this schema:\n${jsonSchema}` },
           {
             inline_data: {
               mime_type: "image/jpeg",
@@ -418,9 +444,7 @@ async function callProvider(
   }
 }
 
-// Enrich result with database info
 function enrichResultWithDatabase(result: HarvestResult, crops: DBCrop[], prices: any[]): HarvestResult {
-  // Try to find matching crop for local name
   const matchingCrop = crops.find(c => 
     c.name.toLowerCase().includes(result.detected_crop.toLowerCase()) ||
     result.detected_crop.toLowerCase().includes(c.name.toLowerCase())
@@ -429,7 +453,6 @@ function enrichResultWithDatabase(result: HarvestResult, crops: DBCrop[], prices
   if (matchingCrop) {
     result.detected_crop_local = matchingCrop.name_local || result.detected_crop_local;
     
-    // Find price from database for this crop and grade
     const matchingPrice = prices.find(p => 
       p.crop_id === matchingCrop.id && 
       p.quality_grade === result.grade
@@ -451,7 +474,6 @@ function enrichResultWithDatabase(result: HarvestResult, crops: DBCrop[], prices
   return result;
 }
 
-// Get location context for pricing and advice
 function getLocationContext(
   latitude: number | null,
   longitude: number | null,
@@ -459,52 +481,62 @@ function getLocationContext(
   regionName: string | null,
   language: string
 ): { context: string; nearestMarket: string } {
-  let nearestMarket = "Marché Central";
+  const isFr = language === "fr";
+  let nearestMarket = isFr ? "Marché Central" : "Central Market";
   
   if (!latitude || !longitude) {
     return { context: "", nearestMarket };
   }
 
-  let context = `\n\n--- CONTEXTE GÉOGRAPHIQUE DE L'AGRICULTEUR ---\n`;
+  let context = isFr
+    ? `\n\n--- CONTEXTE GÉOGRAPHIQUE DE L'AGRICULTEUR ---\n`
+    : `\n\n--- FARMER'S GEOGRAPHIC CONTEXT ---\n`;
+  
   context += `Position GPS: ${latitude.toFixed(4)}°N, ${longitude.toFixed(4)}°E\n`;
   
   if (altitude !== null) {
     context += `Altitude: ${Math.round(altitude)}m\n`;
   }
 
-  // Determine nearest market based on coordinates
   const markets = [
-    { name: "Marché Mokolo", lat: 3.8667, lon: 11.5167, region: "Centre" },
-    { name: "Marché Sandaga", lat: 4.0503, lon: 9.7000, region: "Littoral" },
-    { name: "Marché Mboppi", lat: 4.0450, lon: 9.7050, region: "Littoral" },
-    { name: "Marché de Bamenda", lat: 5.9500, lon: 10.1500, region: "Nord-Ouest" },
-    { name: "Marché de Bafoussam", lat: 5.4833, lon: 10.4167, region: "Ouest" },
-    { name: "Marché de Garoua", lat: 9.3000, lon: 13.3833, region: "Nord" },
-    { name: "Marché de Maroua", lat: 10.5917, lon: 14.3167, region: "Extrême-Nord" },
-    { name: "Marché d'Ebolowa", lat: 2.9333, lon: 11.1500, region: "Sud" },
-    { name: "Marché de Bertoua", lat: 4.0333, lon: 14.0333, region: "Est" },
-    { name: "Marché de Buéa", lat: 4.1500, lon: 9.2333, region: "Sud-Ouest" },
+    { name: "Marché Mokolo", nameEn: "Mokolo Market", lat: 3.8667, lon: 11.5167, region: "Centre" },
+    { name: "Marché Sandaga", nameEn: "Sandaga Market", lat: 4.0503, lon: 9.7000, region: "Littoral" },
+    { name: "Marché Mboppi", nameEn: "Mboppi Market", lat: 4.0450, lon: 9.7050, region: "Littoral" },
+    { name: "Marché de Bamenda", nameEn: "Bamenda Market", lat: 5.9500, lon: 10.1500, region: "Nord-Ouest" },
+    { name: "Marché de Bafoussam", nameEn: "Bafoussam Market", lat: 5.4833, lon: 10.4167, region: "Ouest" },
+    { name: "Marché de Garoua", nameEn: "Garoua Market", lat: 9.3000, lon: 13.3833, region: "Nord" },
   ];
 
   let minDistance = Infinity;
+  let closestMarket = markets[0];
+
   for (const market of markets) {
-    const dLat = (latitude - market.lat) * Math.PI / 180;
-    const dLon = (longitude - market.lon) * Math.PI / 180;
-    const a = Math.sin(dLat / 2) ** 2 + 
-              Math.cos(latitude * Math.PI / 180) * Math.cos(market.lat * Math.PI / 180) * 
-              Math.sin(dLon / 2) ** 2;
-    const distance = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 6371;
+    const distance = Math.sqrt(
+      Math.pow(latitude - market.lat, 2) + Math.pow(longitude - market.lon, 2)
+    ) * 111;
     
     if (distance < minDistance) {
       minDistance = distance;
-      nearestMarket = market.name;
+      closestMarket = market;
     }
   }
 
-  context += `Marché le plus proche: ${nearestMarket} (${Math.round(minDistance)} km)\n`;
-  context += regionName ? `Région: ${regionName}\n` : "";
-  context += `\nUTILISE les prix du marché ${nearestMarket} comme référence principale.\n`;
-  context += `ADAPTE tes conseils de stockage et transport selon la distance au marché.\n`;
+  nearestMarket = isFr ? closestMarket.name : closestMarket.nameEn;
+
+  context += isFr
+    ? `Marché le plus proche: ${nearestMarket} (${Math.round(minDistance)} km)\n`
+    : `Nearest market: ${nearestMarket} (${Math.round(minDistance)} km)\n`;
+  
+  if (regionName) {
+    context += isFr ? `Région: ${regionName}\n` : `Region: ${regionName}\n`;
+  }
+  
+  context += isFr
+    ? `\nUTILISE les prix du marché ${nearestMarket} comme référence principale.\n`
+    : `\nUSE ${nearestMarket} market prices as main reference.\n`;
+  context += isFr
+    ? `ADAPTE tes conseils de stockage et transport selon la distance au marché.\n`
+    : `ADAPT your storage and transport advice based on distance to market.\n`;
   
   return { context, nearestMarket };
 }
@@ -525,25 +557,23 @@ serve(async (req) => {
       climateZone = null,
     } = await req.json();
 
-    console.log("Harvest analysis - Location:", latitude, longitude, "Alt:", altitude, "Region:", regionName);
+    console.log("Harvest analysis - Language:", language, "Location:", latitude, longitude, "Alt:", altitude, "Region:", regionName);
 
     if (!image) {
+      const errorMsg = language === "fr" ? "Image requise pour l'analyse" : "Image required for analysis";
       return new Response(
-        JSON.stringify({ error: "Image requise pour l'analyse" }),
+        JSON.stringify({ error: errorMsg }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Initialize Supabase client
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Fetch database context
     const { crops, prices } = await fetchDatabaseContext(supabase);
-    let dbContext = buildDatabaseContext(crops, prices);
+    let dbContext = buildDatabaseContext(crops, prices, language);
     
-    // Add location context
     const { context: locationContext, nearestMarket } = getLocationContext(
       latitude, longitude, altitude, regionName, language
     );
@@ -553,59 +583,70 @@ serve(async (req) => {
 
     const providers = getAIProviders();
     if (providers.length === 0) {
+      const errorMsg = language === "fr" ? "Aucun fournisseur IA configuré" : "No AI provider configured";
       return new Response(
-        JSON.stringify({ error: "Aucun fournisseur IA configuré" }),
+        JSON.stringify({ error: errorMsg }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const systemPrompt = `Tu es un expert en évaluation de la qualité des récoltes agricoles au Cameroun, spécialisé dans le tri qualitatif pour la vente et l'estimation du rendement.
+    const languageInstruction = getLanguageInstruction(language);
+    const languageName = getLanguageName(language);
 
-TÂCHE PRINCIPALE:
-1. DÉTECTE AUTOMATIQUEMENT le type de produit agricole dans l'image
-2. ÉVALUE la qualité visuelle (couleur, taille, uniformité, maturité, défauts, humidité, propreté)
-3. ATTRIBUE un grade de qualité (A=Export/Premium, B=Marché local qualité standard, C=Transformation/Qualité inférieure)
-4. ESTIME le prix sur les marchés camerounais
-5. ESTIME LE RENDEMENT potentiel si ces graines/semences sont plantées
-6. DONNE une STRATÉGIE DE VENTE optimale
-7. DONNE des conseils pour améliorer la qualité des prochaines récoltes
+    // Fully multilingual system prompt
+    const systemPrompt = `You are an expert in evaluating agricultural harvest quality in Cameroon, specialized in quality sorting for sales and yield estimation.
 
-ÉVALUATION DU RENDEMENT (pour graines/semences):
-- Analyse la qualité des graines: taille, uniformité, absence de dommages
-- Estime le rendement potentiel par hectare si ces semences sont utilisées
-- Identifie les facteurs qui pourraient affecter le rendement (qualité des graines, humidité, présence de maladies)
-- Donne des conseils pour optimiser le rendement lors de la plantation
+CRITICAL LANGUAGE INSTRUCTION:
+${languageInstruction}
+ALL your responses (feedback, tips, recommendations, detected issues, etc.) MUST be in ${languageName}.
+Do NOT respond in any other language.
 
-STRATÉGIE DE VENTE:
-- Identifie le meilleur moment pour vendre selon la saison et le marché
-- Recommande les acheteurs cibles (grossistes, détaillants, exportateurs, transformateurs)
-- Donne des conseils de négociation basés sur la qualité du produit
+MAIN TASK:
+1. AUTOMATICALLY DETECT the type of agricultural product in the image
+2. EVALUATE visual quality (color, size, uniformity, maturity, defects, moisture, cleanliness)
+3. ASSIGN a quality grade (A=Export/Premium, B=Local market standard quality, C=Processing/Lower quality)
+4. ESTIMATE the price on Cameroonian markets
+5. ESTIMATE YIELD potential if these seeds/grains are planted
+6. PROVIDE an OPTIMAL SELLING STRATEGY
+7. GIVE tips to improve future harvest quality
+
+YIELD EVALUATION (for seeds/grains):
+- Analyze seed quality: size, uniformity, absence of damage
+- Estimate potential yield per hectare if these seeds are used
+- Identify factors that could affect yield (seed quality, moisture, presence of diseases)
+- Give tips to optimize yield during planting
+
+SELLING STRATEGY:
+- Identify the best time to sell based on season and market
+- Recommend target buyers (wholesalers, retailers, exporters, processors)
+- Give negotiation tips based on product quality
 
 IMPORTANT:
-- Détecte automatiquement le produit sans que l'utilisateur ait besoin de le spécifier
-- UTILISE EN PRIORITÉ les prix de référence de la base de données locale s'ils sont fournis
-- Base tes estimations de prix sur les marchés camerounais actuels${nearestMarket ? ` (référence: ${nearestMarket})` : ""}
-- Devise: XAF (Franc CFA)
-- Sois réaliste et précis dans tes évaluations
-- Prends en compte la saison actuelle pour les prix et la stratégie de vente
-- Ajuste les prix selon le grade de qualité détecté
-- Si tu détectes des problèmes (pourriture, parasites, moisissures, humidité excessive), signale-les
-- Donne toujours des conseils pratiques pour améliorer les prochaines récoltes
-- Inclus des conseils de stockage et conservation
-${altitude !== null ? `- L'agriculteur est à ${Math.round(altitude)}m d'altitude: adapte les conseils de conservation et le rendement estimé` : ""}
-${regionName ? `- L'agriculteur est dans la région ${regionName}: utilise les prix locaux de cette zone et adapte les conseils` : ""}`;
+- Automatically detect the product without user specification
+- PRIORITIZE reference prices from local database if provided
+- Base your price estimates on current Cameroonian markets${nearestMarket ? ` (reference: ${nearestMarket})` : ""}
+- Currency: XAF (CFA Franc)
+- Be realistic and precise in your evaluations
+- Consider current season for prices and selling strategy
+- Adjust prices according to detected quality grade
+- If you detect problems (rot, pests, mold, excessive moisture), report them
+- Always give practical tips to improve future harvests
+- Include storage and preservation tips
+${altitude !== null ? `- Farmer is at ${Math.round(altitude)}m altitude: adapt conservation tips and estimated yield` : ""}
+${regionName ? `- Farmer is in ${regionName} region: use local prices from this zone and adapt tips` : ""}`;
 
-    const userPrompt = `Analyse cette image de récolte en détail.
+    const userPrompt = `Analyze this harvest image in detail.
 
-1. Identifie automatiquement le type de produit agricole
-2. Évalue la qualité visuelle complète (couleur, taille, uniformité, maturité, défauts, humidité, propreté)
-3. Attribue un grade (A, B ou C) pour le tri et la vente
-4. Estime le prix pour le marché camerounais
-5. SI CE SONT DES GRAINES/SEMENCES: Estime le rendement potentiel par hectare si elles sont plantées
-6. Donne une stratégie de vente optimale (meilleur moment, acheteurs cibles, conseils de négociation)
-7. Donne des conseils d'amélioration et de stockage
+1. Automatically identify the type of agricultural product
+2. Evaluate complete visual quality (color, size, uniformity, maturity, defects, moisture, cleanliness)
+3. Assign a grade (A, B or C) for sorting and sales
+4. Estimate price for Cameroonian market
+5. IF SEEDS/GRAINS: Estimate potential yield per hectare if planted
+6. Provide an optimal selling strategy (best time, target buyers, negotiation tips)
+7. Give improvement and storage tips
 
-Réponds en ${language === "fr" ? "français" : "anglais"}.`;
+IMPORTANT: ${languageInstruction}
+Respond entirely in ${languageName}.`;
 
     let lastError = "";
 
@@ -619,7 +660,6 @@ Réponds en ${language === "fr" ? "français" : "anglais"}.`;
       );
 
       if (success && result) {
-        // Enrich with database info
         const enrichedResult = enrichResultWithDatabase(result, crops, prices);
         
         return new Response(
@@ -639,9 +679,13 @@ Réponds en ${language === "fr" ? "français" : "anglais"}.`;
       }
     }
 
+    const errorMsg = language === "fr" 
+      ? "Tous les services IA sont temporairement indisponibles. Veuillez réessayer plus tard."
+      : "All AI services are temporarily unavailable. Please try again later.";
+
     return new Response(
       JSON.stringify({ 
-        error: "Tous les services IA sont temporairement indisponibles. Veuillez réessayer plus tard.",
+        error: errorMsg,
         details: lastError
       }),
       { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -649,7 +693,7 @@ Réponds en ${language === "fr" ? "français" : "anglais"}.`;
   } catch (error) {
     console.error("Error in analyze-harvest function:", error);
     return new Response(
-      JSON.stringify({ error: "Une erreur est survenue lors de l'analyse" }),
+      JSON.stringify({ error: "An error occurred during analysis" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
