@@ -11,6 +11,23 @@ export interface AppLanguage {
   is_active: boolean;
   is_default: boolean;
   translation_progress: number;
+  // New metadata fields
+  dialect_info?: string;
+  script_type?: string;
+  text_direction?: string;
+  tts_enabled?: boolean;
+  tts_voice_id?: string;
+  region?: string;
+  iso_639_3?: string;
+}
+
+export interface TranslationEntry {
+  key: string;
+  value: string;
+  pronunciation?: string;
+  audio_url?: string;
+  is_ai_generated?: boolean;
+  is_validated?: boolean;
 }
 
 interface TranslationMap {
