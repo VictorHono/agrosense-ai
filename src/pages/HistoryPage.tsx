@@ -50,9 +50,30 @@ function DiagnosisDetailModal({
   const prevention = Array.isArray(meta.prevention) ? meta.prevention : [];
   const description = String(meta.description || '');
   const altitude = meta.altitude ? Number(meta.altitude) : null;
-  const climate = String(meta.climate || '');
+  const climate = String(meta.climate || meta.climate_zone || '');
   const imageUrl = String(meta.image_url || '');
   const analysisDate = new Date(activity.created_at);
+  
+  // Extended location data
+  const latitude = meta.latitude ? Number(meta.latitude) : null;
+  const longitude = meta.longitude ? Number(meta.longitude) : null;
+  const nearestCity = String(meta.nearest_city || meta.nearestCity || '');
+  const season = String(meta.season || '');
+  
+  // Weather conditions
+  const weatherRaw = meta.weather_conditions || meta.weather || {};
+  const weather = typeof weatherRaw === 'object' && weatherRaw !== null ? weatherRaw as Record<string, unknown> : {};
+  const temperature = typeof weather.temperature === 'number' ? weather.temperature : null;
+  const humidity = typeof weather.humidity === 'number' ? weather.humidity : null;
+  const rainfall = typeof weather.rainfall === 'number' ? weather.rainfall : null;
+  const windSpeed = typeof weather.wind_speed === 'number' ? weather.wind_speed : null;
+  const weatherDescription = String(weather.description || weather.condition || '');
+  
+  // Source information
+  const fromLearning = Boolean(meta.from_learning);
+  const fromDatabase = Boolean(meta.from_database);
+  const cropLocal = String(meta.crop_local || meta.detected_crop_local || '');
+  const diseaseLocal = String(meta.disease_local || meta.local_name || '');
 
   // Parse treatments into biological and chemical if possible
   const biologicalTreatments = treatments.filter((t: unknown) => 
@@ -670,14 +691,55 @@ function DiagnosisDetailModal({
             </Card>
           )}
 
-          {/* Environmental Info */}
+          {/* Source Badge */}
+          {(fromLearning || fromDatabase) && (
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2">
+                  <Sprout className="w-5 h-5 text-primary" />
+                  <span className="font-semibold">Source de l'analyse</span>
+                  <Badge 
+                    variant="outline" 
+                    className={cn(
+                      "ml-auto",
+                      fromLearning 
+                        ? "bg-green-500/10 text-green-600 border-green-500/30" 
+                        : "bg-blue-500/10 text-blue-600 border-blue-500/30"
+                    )}
+                  >
+                    {fromLearning ? '🧠 Apprentissage local' : '📚 Base expert'}
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  {fromLearning 
+                    ? 'Diagnostic basé sur des cas similaires dans votre région' 
+                    : 'Diagnostic basé sur la base de données expert'}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* GPS Position & Location Details */}
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center gap-2 mb-4">
                 <MapPin className="w-5 h-5 text-primary" />
-                <span className="font-semibold">Contexte environnemental</span>
+                <span className="font-semibold">Position & Localisation</span>
               </div>
               <div className="grid grid-cols-2 gap-3">
+                {/* Coordinates */}
+                {(latitude !== null && longitude !== null) && (
+                  <div className="col-span-2 p-3 bg-primary/5 rounded-xl border border-primary/20">
+                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                      <MapPin className="w-4 h-4" />
+                      <span className="text-xs font-medium">Coordonnées GPS</span>
+                    </div>
+                    <p className="font-mono text-sm font-medium">
+                      {latitude.toFixed(6)}°, {longitude.toFixed(6)}°
+                    </p>
+                  </div>
+                )}
+
                 <div className="p-3 bg-muted/50 rounded-xl">
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
                     <MapPin className="w-4 h-4" />
@@ -686,7 +748,17 @@ function DiagnosisDetailModal({
                   <p className="font-medium">{region !== '-' ? region : 'Non spécifiée'}</p>
                 </div>
                 
-                {altitude && (
+                {nearestCity && (
+                  <div className="p-3 bg-muted/50 rounded-xl">
+                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                      <MapPin className="w-4 h-4" />
+                      <span className="text-xs">Ville proche</span>
+                    </div>
+                    <p className="font-medium">{nearestCity}</p>
+                  </div>
+                )}
+                
+                {altitude !== null && (
                   <div className="p-3 bg-muted/50 rounded-xl">
                     <div className="flex items-center gap-2 text-muted-foreground mb-1">
                       <TrendingUp className="w-4 h-4" />
@@ -700,19 +772,129 @@ function DiagnosisDetailModal({
                   <div className="p-3 bg-muted/50 rounded-xl">
                     <div className="flex items-center gap-2 text-muted-foreground mb-1">
                       <Sun className="w-4 h-4" />
-                      <span className="text-xs">Climat</span>
+                      <span className="text-xs">Zone climatique</span>
                     </div>
                     <p className="font-medium">{climate}</p>
                   </div>
                 )}
                 
+                {season && (
+                  <div className="p-3 bg-muted/50 rounded-xl">
+                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                      <Calendar className="w-4 h-4" />
+                      <span className="text-xs">Saison</span>
+                    </div>
+                    <p className="font-medium capitalize">{season}</p>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Weather Conditions */}
+          {(temperature !== null || humidity !== null || rainfall !== null || weatherDescription) && (
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-4">
+                  <ThermometerSun className="w-5 h-5 text-primary" />
+                  <span className="font-semibold">Conditions météorologiques</span>
+                </div>
+                
+                {weatherDescription && (
+                  <div className="mb-3 p-3 bg-blue-500/5 rounded-xl border border-blue-500/20">
+                    <p className="text-sm font-medium text-blue-700 dark:text-blue-300 capitalize">
+                      {weatherDescription}
+                    </p>
+                  </div>
+                )}
+                
+                <div className="grid grid-cols-2 gap-3">
+                  {temperature !== null && (
+                    <div className="p-3 bg-muted/50 rounded-xl">
+                      <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                        <ThermometerSun className="w-4 h-4" />
+                        <span className="text-xs">Température</span>
+                      </div>
+                      <p className="font-medium">{temperature}°C</p>
+                    </div>
+                  )}
+                  
+                  {humidity !== null && (
+                    <div className="p-3 bg-muted/50 rounded-xl">
+                      <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                        <Droplets className="w-4 h-4" />
+                        <span className="text-xs">Humidité</span>
+                      </div>
+                      <p className="font-medium">{humidity}%</p>
+                    </div>
+                  )}
+                  
+                  {rainfall !== null && (
+                    <div className="p-3 bg-muted/50 rounded-xl">
+                      <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                        <Droplets className="w-4 h-4" />
+                        <span className="text-xs">Précipitations</span>
+                      </div>
+                      <p className="font-medium">{rainfall} mm</p>
+                    </div>
+                  )}
+                  
+                  {windSpeed !== null && (
+                    <div className="p-3 bg-muted/50 rounded-xl">
+                      <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                        <Wind className="w-4 h-4" />
+                        <span className="text-xs">Vent</span>
+                      </div>
+                      <p className="font-medium">{windSpeed} km/h</p>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Analysis Time */}
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-4">
+                <Clock className="w-5 h-5 text-primary" />
+                <span className="font-semibold">Détails de l'analyse</span>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 bg-muted/50 rounded-xl">
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <Calendar className="w-4 h-4" />
+                    <span className="text-xs">Date</span>
+                  </div>
+                  <p className="font-medium">{format(analysisDate, 'dd MMMM yyyy', { locale: fr })}</p>
+                </div>
                 <div className="p-3 bg-muted/50 rounded-xl">
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
                     <Clock className="w-4 h-4" />
-                    <span className="text-xs">Heure d'analyse</span>
+                    <span className="text-xs">Heure</span>
                   </div>
                   <p className="font-medium">{format(analysisDate, 'HH:mm', { locale: fr })}</p>
                 </div>
+                
+                {cropLocal && (
+                  <div className="p-3 bg-muted/50 rounded-xl">
+                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                      <Leaf className="w-4 h-4" />
+                      <span className="text-xs">Nom local</span>
+                    </div>
+                    <p className="font-medium">{cropLocal}</p>
+                  </div>
+                )}
+                
+                {diseaseLocal && !isHealthy && (
+                  <div className="p-3 bg-muted/50 rounded-xl">
+                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                      <Bug className="w-4 h-4" />
+                      <span className="text-xs">Maladie (local)</span>
+                    </div>
+                    <p className="font-medium">{diseaseLocal}</p>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -755,6 +937,31 @@ function HarvestDetailModal({
   const priceMin = Number(meta.price_min || 0);
   const priceMax = Number(meta.price_max || 0);
   const yieldPotential = String(meta.yield_potential || 'medium');
+  
+  // Extended location data
+  const latitude = meta.latitude ? Number(meta.latitude) : null;
+  const longitude = meta.longitude ? Number(meta.longitude) : null;
+  const altitude = meta.altitude ? Number(meta.altitude) : null;
+  const nearestCity = String(meta.nearest_city || meta.nearestCity || '');
+  const climateZone = String(meta.climate_zone || meta.climateZone || '');
+  const season = String(meta.season || '');
+  
+  // Quality details
+  const quality = typeof meta.quality === 'object' && meta.quality ? meta.quality as Record<string, unknown> : {};
+  const colorScore = typeof quality.color === 'number' ? quality.color : null;
+  const sizeScore = typeof quality.size === 'number' ? quality.size : null;
+  const defectsScore = typeof quality.defects === 'number' ? quality.defects : null;
+  const uniformityScore = typeof quality.uniformity === 'number' ? quality.uniformity : null;
+  const maturityScore = typeof quality.maturity === 'number' ? quality.maturity : null;
+  
+  // Additional data
+  const issuesDetected = Array.isArray(meta.issues_detected) ? meta.issues_detected : [];
+  const improvementTips = Array.isArray(meta.improvement_tips) ? meta.improvement_tips : [];
+  const storageTips = Array.isArray(meta.storage_tips) ? meta.storage_tips : [];
+  const recommendedUse = Array.isArray(meta.recommended_use) ? meta.recommended_use : [];
+  const feedback = String(meta.feedback || '');
+  
+  const analysisDate = new Date(activity.created_at);
 
   const getGradeColor = (g: string) => {
     switch (g.toUpperCase()) {
@@ -767,7 +974,7 @@ function HarvestDetailModal({
 
   const getYieldLabel = (y: string) => {
     switch (y.toLowerCase()) {
-      case 'high': return { label: 'Élevé', color: 'text-green-500' };
+      case 'high': case 'excellent': return { label: 'Élevé', color: 'text-green-500' };
       case 'medium': return { label: 'Moyen', color: 'text-yellow-500' };
       case 'low': return { label: 'Faible', color: 'text-red-500' };
       default: return { label: 'Inconnu', color: 'text-muted-foreground' };
@@ -778,18 +985,18 @@ function HarvestDetailModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative bg-background w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl m-0 sm:m-4 animate-in slide-in-from-bottom duration-300">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-background w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-t-3xl sm:rounded-2xl m-0 sm:m-4 animate-in slide-in-from-bottom duration-300 flex flex-col">
         {/* Header */}
-        <div className="sticky top-0 bg-background border-b border-border p-4 flex items-center justify-between">
+        <div className="sticky top-0 bg-background border-b border-border p-4 flex items-center justify-between z-10">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center">
-              <BarChart3 className="w-5 h-5 text-accent-foreground" />
+            <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center">
+              <BarChart3 className="w-6 h-6 text-primary" />
             </div>
             <div>
-              <h2 className="font-semibold text-foreground">Analyse de récolte</h2>
+              <h2 className="font-bold text-lg text-foreground">Analyse de récolte</h2>
               <p className="text-xs text-muted-foreground">
-                {format(new Date(activity.created_at), 'dd MMM yyyy à HH:mm', { locale: fr })}
+                {format(analysisDate, 'EEEE dd MMMM yyyy à HH:mm', { locale: fr })}
               </p>
             </div>
           </div>
@@ -798,86 +1005,319 @@ function HarvestDetailModal({
           </Button>
         </div>
 
-        {/* Content */}
-        <div className="p-4 space-y-4">
-          {/* Crop & Grade */}
-          <div className="bg-muted/50 rounded-xl p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-start gap-3">
-                <Leaf className="w-5 h-5 text-primary mt-0.5" />
-                <div>
-                  <p className="text-sm text-muted-foreground">Culture</p>
-                  <p className="font-semibold text-foreground">{crop}</p>
-                </div>
-              </div>
+        {/* Scrollable Content */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Crop & Grade Card */}
+          <div className="rounded-2xl p-5 bg-primary/5 border-2 border-primary/20">
+            <div className="flex items-start gap-4">
               <div className={cn(
-                "w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold",
+                "w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-bold shrink-0",
                 getGradeColor(grade)
               )}>
                 {grade}
+              </div>
+              <div className="flex-1 min-w-0">
+                <Badge variant="outline" className="text-xs mb-2">
+                  Grade {grade}
+                </Badge>
+                <h3 className="font-bold text-xl text-foreground">{crop}</h3>
+                <p className={cn("font-medium mt-1", yieldInfo.color)}>
+                  Potentiel: {yieldInfo.label}
+                </p>
               </div>
             </div>
           </div>
 
           {/* Quality Score */}
           {qualityScore > 0 && (
-            <div className="p-4 rounded-xl border border-border">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <Award className="w-4 h-4 text-primary" />
-                  <span className="text-sm font-medium">Score de qualité</span>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Award className="w-5 h-5 text-primary" />
+                    <span className="font-semibold">Score de qualité global</span>
+                  </div>
+                  <span className="text-2xl font-bold text-primary">{qualityScore}/100</span>
                 </div>
-                <span className="text-lg font-bold text-primary">{qualityScore}/100</span>
-              </div>
-              <Progress value={qualityScore} className="h-2" />
-              <p className="text-xs text-muted-foreground mt-2">
-                {qualityScore >= 80 ? 'Excellente qualité' : 
-                 qualityScore >= 60 ? 'Bonne qualité' : 
-                 qualityScore >= 40 ? 'Qualité moyenne' : 'Qualité à améliorer'}
-              </p>
-            </div>
+                <Progress value={qualityScore} className="h-3" />
+                <p className="text-xs text-muted-foreground mt-2">
+                  {qualityScore >= 80 ? 'Excellente qualité - Premium' : 
+                   qualityScore >= 60 ? 'Bonne qualité - Standard' : 
+                   qualityScore >= 40 ? 'Qualité moyenne - À surveiller' : 'Qualité à améliorer'}
+                </p>
+              </CardContent>
+            </Card>
           )}
 
-          {/* Yield Potential */}
-          <div className="flex items-center gap-3 p-4 rounded-xl border border-border">
-            <TrendingUp className={cn("w-5 h-5", yieldInfo.color)} />
-            <div className="flex-1">
-              <p className="text-sm text-muted-foreground">Potentiel de rendement</p>
-              <p className={cn("font-semibold", yieldInfo.color)}>{yieldInfo.label}</p>
-            </div>
-          </div>
+          {/* Detailed Quality Breakdown */}
+          {(colorScore !== null || sizeScore !== null || uniformityScore !== null) && (
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-4">
+                  <Activity className="w-5 h-5 text-primary" />
+                  <span className="font-semibold">Détails de qualité</span>
+                </div>
+                <div className="space-y-3">
+                  {colorScore !== null && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Couleur</span>
+                      <div className="flex items-center gap-2">
+                        <Progress value={colorScore} className="h-2 w-24" />
+                        <span className="text-sm font-medium w-10 text-right">{colorScore}%</span>
+                      </div>
+                    </div>
+                  )}
+                  {sizeScore !== null && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Taille</span>
+                      <div className="flex items-center gap-2">
+                        <Progress value={sizeScore} className="h-2 w-24" />
+                        <span className="text-sm font-medium w-10 text-right">{sizeScore}%</span>
+                      </div>
+                    </div>
+                  )}
+                  {uniformityScore !== null && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Uniformité</span>
+                      <div className="flex items-center gap-2">
+                        <Progress value={uniformityScore} className="h-2 w-24" />
+                        <span className="text-sm font-medium w-10 text-right">{uniformityScore}%</span>
+                      </div>
+                    </div>
+                  )}
+                  {maturityScore !== null && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Maturité</span>
+                      <div className="flex items-center gap-2">
+                        <Progress value={maturityScore} className="h-2 w-24" />
+                        <span className="text-sm font-medium w-10 text-right">{maturityScore}%</span>
+                      </div>
+                    </div>
+                  )}
+                  {defectsScore !== null && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Défauts (moins = mieux)</span>
+                      <div className="flex items-center gap-2">
+                        <Progress value={100 - defectsScore} className="h-2 w-24" />
+                        <span className="text-sm font-medium w-10 text-right">{defectsScore}%</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Issues Detected */}
+          {issuesDetected.length > 0 && (
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <AlertTriangle className="w-5 h-5 text-orange-500" />
+                  <span className="font-semibold">Problèmes détectés</span>
+                  <Badge variant="destructive" className="ml-auto">{issuesDetected.length}</Badge>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {issuesDetected.map((issue, i) => (
+                    <Badge 
+                      key={i} 
+                      variant="outline"
+                      className="bg-orange-500/5 text-orange-600 border-orange-500/20"
+                    >
+                      {String(issue)}
+                    </Badge>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Market & Price */}
           {(priceMin > 0 || priceMax > 0) && (
-            <div className="p-4 rounded-xl border border-border">
-              <h3 className="font-medium mb-3 flex items-center gap-2">
-                <CircleDollarSign className="w-4 h-4" />
-                Estimation du marché
-              </h3>
-              <div className="space-y-3">
-                {market !== '-' && (
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Marché</span>
-                    <span className="font-medium">{market}</span>
-                  </div>
-                )}
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Fourchette de prix</span>
-                  <span className="font-bold text-primary">
-                    {priceMin.toLocaleString()} - {priceMax.toLocaleString()} XAF/kg
-                  </span>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-4">
+                  <CircleDollarSign className="w-5 h-5 text-primary" />
+                  <span className="font-semibold">Estimation du marché</span>
                 </div>
-              </div>
-            </div>
+                <div className="space-y-3">
+                  {market !== '-' && (
+                    <div className="flex items-center justify-between text-sm p-3 bg-muted/50 rounded-xl">
+                      <span className="text-muted-foreground">Marché de référence</span>
+                      <span className="font-medium">{market}</span>
+                    </div>
+                  )}
+                  <div className="p-4 bg-green-500/5 rounded-xl border border-green-500/20">
+                    <div className="text-sm text-muted-foreground mb-1">Fourchette de prix estimée</div>
+                    <p className="text-2xl font-bold text-green-600">
+                      {priceMin.toLocaleString()} - {priceMax.toLocaleString()} <span className="text-sm font-normal">XAF/kg</span>
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           )}
 
-          {/* Location */}
-          {region !== '-' && (
-            <div className="flex items-center gap-3 p-3 rounded-xl bg-muted/50">
-              <MapPin className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm">Région: <strong>{region}</strong></span>
-            </div>
+          {/* Feedback */}
+          {feedback && (
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <FileText className="w-5 h-5 text-primary" />
+                  <span className="font-semibold">Évaluation générale</span>
+                </div>
+                <p className="text-sm text-muted-foreground leading-relaxed">{feedback}</p>
+              </CardContent>
+            </Card>
           )}
+
+          {/* Improvement Tips */}
+          {improvementTips.length > 0 && (
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <TrendingUp className="w-5 h-5 text-primary" />
+                  <span className="font-semibold">Conseils d'amélioration</span>
+                </div>
+                <div className="space-y-2">
+                  {improvementTips.map((tip, i) => (
+                    <div key={i} className="flex items-start gap-3 p-3 bg-primary/5 rounded-lg">
+                      <div className="w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold shrink-0">
+                        {i + 1}
+                      </div>
+                      <span className="text-sm">{String(tip)}</span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Storage Tips */}
+          {storageTips.length > 0 && (
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Shield className="w-5 h-5 text-primary" />
+                  <span className="font-semibold">Conseils de stockage</span>
+                </div>
+                <div className="space-y-2">
+                  {storageTips.map((tip, i) => (
+                    <div key={i} className="flex items-start gap-2 p-3 bg-blue-500/5 rounded-lg border-l-2 border-blue-500">
+                      <CheckCircle2 className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+                      <span className="text-sm">{String(tip)}</span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Location & Context */}
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-4">
+                <MapPin className="w-5 h-5 text-primary" />
+                <span className="font-semibold">Contexte géographique</span>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {(latitude !== null && longitude !== null) && (
+                  <div className="col-span-2 p-3 bg-primary/5 rounded-xl border border-primary/20">
+                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                      <MapPin className="w-4 h-4" />
+                      <span className="text-xs font-medium">Coordonnées GPS</span>
+                    </div>
+                    <p className="font-mono text-sm font-medium">
+                      {latitude.toFixed(6)}°, {longitude.toFixed(6)}°
+                    </p>
+                  </div>
+                )}
+
+                {region !== '-' && (
+                  <div className="p-3 bg-muted/50 rounded-xl">
+                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                      <MapPin className="w-4 h-4" />
+                      <span className="text-xs">Région</span>
+                    </div>
+                    <p className="font-medium">{region}</p>
+                  </div>
+                )}
+                
+                {nearestCity && (
+                  <div className="p-3 bg-muted/50 rounded-xl">
+                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                      <MapPin className="w-4 h-4" />
+                      <span className="text-xs">Ville proche</span>
+                    </div>
+                    <p className="font-medium">{nearestCity}</p>
+                  </div>
+                )}
+
+                {altitude !== null && (
+                  <div className="p-3 bg-muted/50 rounded-xl">
+                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                      <TrendingUp className="w-4 h-4" />
+                      <span className="text-xs">Altitude</span>
+                    </div>
+                    <p className="font-medium">{altitude} m</p>
+                  </div>
+                )}
+
+                {climateZone && (
+                  <div className="p-3 bg-muted/50 rounded-xl">
+                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                      <Sun className="w-4 h-4" />
+                      <span className="text-xs">Zone climatique</span>
+                    </div>
+                    <p className="font-medium">{climateZone}</p>
+                  </div>
+                )}
+
+                {season && (
+                  <div className="p-3 bg-muted/50 rounded-xl">
+                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                      <Calendar className="w-4 h-4" />
+                      <span className="text-xs">Saison</span>
+                    </div>
+                    <p className="font-medium capitalize">{season}</p>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Analysis Time */}
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-4">
+                <Clock className="w-5 h-5 text-primary" />
+                <span className="font-semibold">Détails de l'analyse</span>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 bg-muted/50 rounded-xl">
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <Calendar className="w-4 h-4" />
+                    <span className="text-xs">Date</span>
+                  </div>
+                  <p className="font-medium">{format(analysisDate, 'dd MMMM yyyy', { locale: fr })}</p>
+                </div>
+                <div className="p-3 bg-muted/50 rounded-xl">
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <Clock className="w-4 h-4" />
+                    <span className="text-xs">Heure</span>
+                  </div>
+                  <p className="font-medium">{format(analysisDate, 'HH:mm', { locale: fr })}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Footer ID */}
+          <div className="text-center py-4">
+            <p className="text-xs text-muted-foreground">
+              ID de l'analyse: <code className="bg-muted px-2 py-1 rounded">{activity.id.slice(0, 8)}</code>
+            </p>
+          </div>
         </div>
       </div>
     </div>

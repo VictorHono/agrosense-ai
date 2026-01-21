@@ -295,10 +295,19 @@ export function useHarvestAnalysis(): UseHarvestAnalysisReturn {
       const analysisResult = response.analysis as HarvestResult;
       setResult(analysisResult);
       
-      // Log activity
+      // Log activity with extended metadata
+      const getSeason = () => {
+        const month = new Date().getMonth();
+        if (month >= 2 && month <= 4) return 'dry_season';
+        if (month >= 5 && month <= 9) return 'rainy_season';
+        return 'dry_season';
+      };
+
       await logActivity({
         crop: analysisResult.detected_crop,
+        crop_local: analysisResult.detected_crop_local,
         grade: analysisResult.grade,
+        quality: analysisResult.quality,
         quality_score: Math.round(
           (analysisResult.quality.color + 
            analysisResult.quality.size + 
@@ -310,7 +319,19 @@ export function useHarvestAnalysis(): UseHarvestAnalysisReturn {
         price_max: analysisResult.estimatedPrice.max,
         market: analysisResult.estimatedPrice.market,
         yield_potential: analysisResult.yield_estimation?.yield_potential,
+        issues_detected: analysisResult.issues_detected,
+        improvement_tips: analysisResult.improvement_tips,
+        storage_tips: analysisResult.storage_tips,
+        recommended_use: analysisResult.recommendedUse,
+        feedback: analysisResult.feedback,
+        // Location data
         region: locationInfo?.regionName,
+        latitude: position?.latitude,
+        longitude: position?.longitude,
+        altitude: position?.altitude,
+        nearest_city: locationInfo?.nearestCity,
+        climate_zone: locationInfo?.climateZone,
+        season: getSeason(),
       });
       
       return analysisResult;
