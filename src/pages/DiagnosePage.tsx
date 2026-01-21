@@ -23,7 +23,7 @@ import { useGeolocationContext } from '@/contexts/GeolocationContext';
 export default function DiagnosePage() {
   const { t, language } = useLanguage();
   const { user } = useAuth();
-  const { locationInfo } = useGeolocationContext();
+  const { locationInfo, position } = useGeolocationContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const [isReading, setIsReading] = useState(false);
@@ -74,17 +74,50 @@ export default function DiagnosePage() {
   const logDiagnosisActivity = async () => {
     if (!user || !result) return;
     
+    // Determine current season based on month
+    const getSeason = () => {
+      const month = new Date().getMonth();
+      if (month >= 2 && month <= 4) return 'dry_season'; // Mar-May
+      if (month >= 5 && month <= 9) return 'rainy_season'; // Jun-Oct
+      return 'dry_season'; // Nov-Feb
+    };
+    
     try {
       await supabase.from('user_activity').insert([{
         user_id: user.id,
         activity_type: 'diagnosis',
         metadata: {
+          // Basic crop info
           crop: result.detected_crop,
+          crop_local: result.detected_crop_local,
           disease_name: result.disease_name,
+          disease_local: result.local_name,
           is_healthy: result.is_healthy,
           severity: result.severity,
           confidence: result.confidence,
+          description: result.description,
+          
+          // Symptoms, causes, treatments
+          symptoms: result.symptoms || [],
+          causes: result.causes || [],
+          treatments: [
+            ...(result.biological_treatments || []),
+            ...(result.chemical_treatments || []),
+          ],
+          prevention: result.prevention || [],
+          
+          // Location data
           region: locationInfo?.regionName,
+          latitude: position?.latitude,
+          longitude: position?.longitude,
+          altitude: position?.altitude,
+          nearest_city: locationInfo?.nearestCity,
+          climate_zone: locationInfo?.climateZone,
+          season: getSeason(),
+          
+          // Source tracking
+          from_learning: result.from_learning,
+          from_database: result.from_database,
         },
       }]);
     } catch (err) {
