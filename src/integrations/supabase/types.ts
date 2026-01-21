@@ -61,6 +61,83 @@ export type Database = {
           },
         ]
       }
+      app_languages: {
+        Row: {
+          code: string
+          created_at: string
+          flag: string | null
+          id: string
+          is_active: boolean | null
+          is_default: boolean | null
+          name: string
+          native_name: string
+          translation_progress: number | null
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          flag?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_default?: boolean | null
+          name: string
+          native_name: string
+          translation_progress?: number | null
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          flag?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_default?: boolean | null
+          name?: string
+          native_name?: string
+          translation_progress?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      app_translations: {
+        Row: {
+          category: string | null
+          created_at: string
+          id: string
+          language_code: string
+          translation_key: string
+          translation_value: string
+          updated_at: string
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string
+          id?: string
+          language_code: string
+          translation_key: string
+          translation_value: string
+          updated_at?: string
+        }
+        Update: {
+          category?: string | null
+          created_at?: string
+          id?: string
+          language_code?: string
+          translation_key?: string
+          translation_value?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "app_translations_language_code_fkey"
+            columns: ["language_code"]
+            isOneToOne: false
+            referencedRelation: "app_languages"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
       chat_history: {
         Row: {
           content: string
