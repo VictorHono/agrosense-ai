@@ -121,6 +121,102 @@ export type Database = {
         }
         Relationships: []
       }
+      diagnosis_learning: {
+        Row: {
+          altitude: number | null
+          causes: Json | null
+          climate_zone: string | null
+          confidence: number | null
+          created_at: string
+          crop_local_name: string | null
+          crop_name: string
+          disease_local_name: string | null
+          disease_name: string | null
+          id: string
+          is_healthy: boolean | null
+          language: string | null
+          last_matched_at: string | null
+          latitude: number | null
+          longitude: number | null
+          nearest_city: string | null
+          prevention: Json | null
+          region: string | null
+          season: string | null
+          severity: string | null
+          source: string | null
+          symptoms: Json | null
+          treatments: Json | null
+          updated_at: string
+          use_count: number | null
+          verification_notes: string | null
+          verified: boolean | null
+          verified_by: string | null
+          weather_conditions: Json | null
+        }
+        Insert: {
+          altitude?: number | null
+          causes?: Json | null
+          climate_zone?: string | null
+          confidence?: number | null
+          created_at?: string
+          crop_local_name?: string | null
+          crop_name: string
+          disease_local_name?: string | null
+          disease_name?: string | null
+          id?: string
+          is_healthy?: boolean | null
+          language?: string | null
+          last_matched_at?: string | null
+          latitude?: number | null
+          longitude?: number | null
+          nearest_city?: string | null
+          prevention?: Json | null
+          region?: string | null
+          season?: string | null
+          severity?: string | null
+          source?: string | null
+          symptoms?: Json | null
+          treatments?: Json | null
+          updated_at?: string
+          use_count?: number | null
+          verification_notes?: string | null
+          verified?: boolean | null
+          verified_by?: string | null
+          weather_conditions?: Json | null
+        }
+        Update: {
+          altitude?: number | null
+          causes?: Json | null
+          climate_zone?: string | null
+          confidence?: number | null
+          created_at?: string
+          crop_local_name?: string | null
+          crop_name?: string
+          disease_local_name?: string | null
+          disease_name?: string | null
+          id?: string
+          is_healthy?: boolean | null
+          language?: string | null
+          last_matched_at?: string | null
+          latitude?: number | null
+          longitude?: number | null
+          nearest_city?: string | null
+          prevention?: Json | null
+          region?: string | null
+          season?: string | null
+          severity?: string | null
+          source?: string | null
+          symptoms?: Json | null
+          treatments?: Json | null
+          updated_at?: string
+          use_count?: number | null
+          verification_notes?: string | null
+          verified?: boolean | null
+          verified_by?: string | null
+          weather_conditions?: Json | null
+        }
+        Relationships: []
+      }
       diseases: {
         Row: {
           causes: string[] | null
