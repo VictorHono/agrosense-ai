@@ -124,23 +124,36 @@ function getAIProviders(): AIProvider[] {
 // Search for similar cases in the learning database
 async function searchLearningDatabase(
   supabase: any,
-  cropName: string,
+  cropName: string | null,
+  diseaseName: string | null,
   region: string | null,
   climateZone: string | null,
   altitude: number | null
 ): Promise<LearningEntry[]> {
-  console.log(`🔍 Searching learning database for: crop="${cropName}", region="${region}", climate="${climateZone}"`);
+  console.log(`🔍 Searching learning database for: crop="${cropName}", disease="${diseaseName}", region="${region}", climate="${climateZone}"`);
   
   let query = supabase
     .from("diagnosis_learning")
     .select("*")
+    .order("verified", { ascending: false })  // Prioritize verified entries
     .order("use_count", { ascending: false })
-    .order("verified", { ascending: false })
-    .limit(10);
+    .limit(15);
 
-  // Search by crop name (flexible matching)
+  // Build flexible OR conditions
+  const orConditions: string[] = [];
+  
   if (cropName) {
-    query = query.or(`crop_name.ilike.%${cropName}%,crop_local_name.ilike.%${cropName}%`);
+    orConditions.push(`crop_name.ilike.%${cropName}%`);
+    orConditions.push(`crop_local_name.ilike.%${cropName}%`);
+  }
+  
+  if (diseaseName) {
+    orConditions.push(`disease_name.ilike.%${diseaseName}%`);
+    orConditions.push(`disease_local_name.ilike.%${diseaseName}%`);
+  }
+  
+  if (orConditions.length > 0) {
+    query = query.or(orConditions.join(","));
   }
 
   const { data, error } = await query;
@@ -156,51 +169,67 @@ async function searchLearningDatabase(
   const scoredResults = (data || []).map((entry: LearningEntry) => {
     let score = 0;
     
-    // Exact crop match
-    if (entry.crop_name?.toLowerCase() === cropName?.toLowerCase()) {
+    // VERIFIED entries get highest priority
+    if (entry.verified) {
       score += 50;
-    } else if (entry.crop_name?.toLowerCase().includes(cropName?.toLowerCase()) ||
-               cropName?.toLowerCase().includes(entry.crop_name?.toLowerCase())) {
-      score += 30;
+    }
+    
+    // Exact disease match (very important for finding validated treatments)
+    if (diseaseName && entry.disease_name) {
+      const diseaseNameLower = diseaseName.toLowerCase();
+      const entryDiseaseLower = entry.disease_name.toLowerCase();
+      if (entryDiseaseLower === diseaseNameLower) {
+        score += 60;
+      } else if (entryDiseaseLower.includes(diseaseNameLower) || diseaseNameLower.includes(entryDiseaseLower)) {
+        score += 40;
+      }
+    }
+    
+    // Exact crop match
+    if (cropName && entry.crop_name) {
+      const cropNameLower = cropName.toLowerCase();
+      const entryCropLower = entry.crop_name.toLowerCase();
+      if (entryCropLower === cropNameLower) {
+        score += 35;
+      } else if (entryCropLower.includes(cropNameLower) || cropNameLower.includes(entryCropLower)) {
+        score += 20;
+      }
     }
 
     // Region match
     if (region && entry.region?.toLowerCase() === region.toLowerCase()) {
-      score += 20;
+      score += 15;
     }
 
     // Climate zone match
     if (climateZone && entry.climate_zone?.toLowerCase() === climateZone.toLowerCase()) {
-      score += 15;
+      score += 10;
     }
 
     // Altitude proximity (within 300m)
     if (altitude !== null && entry.altitude !== null) {
       const altDiff = Math.abs(altitude - entry.altitude);
-      if (altDiff < 100) score += 15;
-      else if (altDiff < 300) score += 10;
-      else if (altDiff < 500) score += 5;
+      if (altDiff < 100) score += 10;
+      else if (altDiff < 300) score += 5;
     }
 
-    // Verified entries get a boost
-    if (entry.verified) {
-      score += 25;
-    }
-
-    // Popular entries (high use count) get a boost
-    score += Math.min(entry.use_count, 20);
+    // Popular entries (high use count) get a small boost
+    score += Math.min(entry.use_count, 10);
 
     return { entry, score };
   });
 
   // Filter entries with meaningful scores and sort by score
   const relevantResults = scoredResults
-    .filter((r: { score: number }) => r.score >= 30)
+    .filter((r: { score: number }) => r.score >= 20)
     .sort((a: { score: number }, b: { score: number }) => b.score - a.score)
     .slice(0, 5)
     .map((r: { entry: LearningEntry }) => r.entry);
 
   console.log(`✅ ${relevantResults.length} relevant learning entries after scoring`);
+  if (relevantResults.length > 0) {
+    console.log(`🏆 Top result: verified=${relevantResults[0].verified}, disease="${relevantResults[0].disease_name}", treatments=${relevantResults[0].treatments?.length || 0}`);
+  }
   
   return relevantResults;
 }
@@ -825,11 +854,12 @@ serve(async (req) => {
     const { crops, diseases } = await fetchDatabaseContext(supabase);
     let dbContext = buildDatabaseContext(crops, diseases);
     
-    // ==================== LEARNING SYSTEM: SEARCH FIRST ====================
-    const searchCropName = userSpecifiedCrop || "";
-    const learningEntries = await searchLearningDatabase(
+    // ==================== LEARNING SYSTEM: INITIAL SEARCH ====================
+    const searchCropName = userSpecifiedCrop || null;
+    let learningEntries = await searchLearningDatabase(
       supabase,
       searchCropName,
+      null, // disease name not known yet
       regionName,
       climateZone,
       altitude
@@ -964,18 +994,97 @@ Réponds en ${language === "fr" ? "français" : "anglais"}.`;
       if (success && result) {
         usedProvider = provider.name;
         
+        // ==================== POST-ANALYSIS LEARNING SEARCH ====================
+        // Now that we have a disease name, search again in learning database
+        if (result.disease_name && !result.is_healthy) {
+          const postAnalysisLearning = await searchLearningDatabase(
+            supabase,
+            result.detected_crop,
+            result.disease_name,
+            regionName,
+            climateZone,
+            altitude
+          );
+          
+          // Merge with initial learning entries, prioritizing post-analysis results
+          if (postAnalysisLearning.length > 0) {
+            console.log(`🔄 Post-analysis search found ${postAnalysisLearning.length} matching entries`);
+            
+            // Keep unique entries, prioritizing verified ones from post-analysis
+            const existingIds = new Set(learningEntries.map(e => e.id));
+            for (const entry of postAnalysisLearning) {
+              if (!existingIds.has(entry.id)) {
+                learningEntries.push(entry);
+              }
+            }
+          }
+        }
+        
         // Enrich with database info
         let enrichedResult = enrichResultWithDatabase(result, diseases, crops);
         
-        // Check if result matches a learning entry
-        const matchedLearning = learningEntries.find(entry => 
-          entry.disease_name?.toLowerCase() === result.disease_name?.toLowerCase() ||
-          entry.crop_name?.toLowerCase() === result.detected_crop?.toLowerCase()
-        );
+        // ==================== LEARNING ENRICHMENT ====================
+        // Find best matching verified learning entry for treatment enrichment
+        const matchedLearning = learningEntries
+          .filter(entry => entry.verified) // Prioritize verified entries
+          .find(entry => {
+            const diseaseMatch = entry.disease_name && result.disease_name &&
+              (entry.disease_name.toLowerCase().includes(result.disease_name.toLowerCase()) ||
+               result.disease_name.toLowerCase().includes(entry.disease_name.toLowerCase()));
+            const cropMatch = entry.crop_name &&
+              (entry.crop_name.toLowerCase().includes(result.detected_crop.toLowerCase()) ||
+               result.detected_crop.toLowerCase().includes(entry.crop_name.toLowerCase()));
+            return diseaseMatch && cropMatch;
+          }) || learningEntries.find(entry => {
+            // Fallback to any matching entry
+            const diseaseMatch = entry.disease_name && result.disease_name &&
+              (entry.disease_name.toLowerCase().includes(result.disease_name.toLowerCase()) ||
+               result.disease_name.toLowerCase().includes(entry.disease_name.toLowerCase()));
+            return diseaseMatch;
+          });
         
         if (matchedLearning) {
-          console.log("🎯 Matched learning entry:", matchedLearning.id);
+          console.log(`🎯 Matched learning entry: id=${matchedLearning.id}, verified=${matchedLearning.verified}`);
           enrichedResult.from_learning = true;
+          
+          // Enrich with treatments from learning entry if not already from database
+          if (matchedLearning.treatments && matchedLearning.treatments.length > 0) {
+            const bioFromLearning = matchedLearning.treatments
+              .filter((t: any) => t.type === "biological" || t.type?.includes("bio"))
+              .map((t: any) => t.description ? `${t.name}: ${t.description}` : t.name);
+            
+            const chemFromLearning = matchedLearning.treatments
+              .filter((t: any) => t.type === "chemical" || t.type?.includes("chim"))
+              .map((t: any) => t.description ? `${t.name}: ${t.description}` : t.name);
+            
+            // Merge with existing treatments (learning data adds to, doesn't replace)
+            if (bioFromLearning.length > 0) {
+              const existingBio = enrichedResult.biological_treatments || [];
+              const allBio = [...new Set([...bioFromLearning, ...existingBio])];
+              enrichedResult.biological_treatments = allBio;
+              console.log(`📋 Added ${bioFromLearning.length} biological treatments from learning`);
+            }
+            
+            if (chemFromLearning.length > 0) {
+              const existingChem = enrichedResult.chemical_treatments || [];
+              const allChem = [...new Set([...chemFromLearning, ...existingChem])];
+              enrichedResult.chemical_treatments = allChem;
+              console.log(`📋 Added ${chemFromLearning.length} chemical treatments from learning`);
+            }
+          }
+          
+          // Enrich symptoms and causes from verified learning
+          if (matchedLearning.verified) {
+            if (matchedLearning.symptoms && matchedLearning.symptoms.length > 0) {
+              const existingSymptoms = enrichedResult.symptoms || [];
+              enrichedResult.symptoms = [...new Set([...matchedLearning.symptoms, ...existingSymptoms])];
+            }
+            if (matchedLearning.causes && matchedLearning.causes.length > 0) {
+              const existingCauses = enrichedResult.causes || [];
+              enrichedResult.causes = [...new Set([...matchedLearning.causes, ...existingCauses])];
+            }
+          }
+          
           // Increment use count asynchronously
           incrementLearningUseCount(supabase, matchedLearning.id);
         }
@@ -1003,6 +1112,7 @@ Réponds en ${language === "fr" ? "français" : "anglais"}.`;
             analyzed_at: new Date().toISOString(),
             provider: usedProvider,
             learning_entries_used: learningEntries.length,
+            matched_verified: matchedLearning?.verified || false,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
