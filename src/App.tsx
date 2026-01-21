@@ -13,6 +13,7 @@ import AssistantPage from "./pages/AssistantPage";
 import HarvestPage from "./pages/HarvestPage";
 import SettingsPage from "./pages/SettingsPage";
 import TipsPage from "./pages/TipsPage";
+import HistoryPage from "./pages/HistoryPage";
 import AuthPage from "./pages/AuthPage";
 import AdminLayout from "./components/admin/AdminLayout";
 import RequireAdmin from "./components/admin/RequireAdmin";
@@ -65,6 +66,7 @@ const App = () => (
                 <Route path="/harvest" element={<RequireAuth><HarvestPage /></RequireAuth>} />
                 <Route path="/settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
                 <Route path="/tips" element={<RequireAuth><TipsPage /></RequireAuth>} />
+                <Route path="/history" element={<RequireAuth><HistoryPage /></RequireAuth>} />
                 
                 {/* Protected Admin Routes */}
                 <Route path="/admin" element={
