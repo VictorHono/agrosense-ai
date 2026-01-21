@@ -91,17 +91,16 @@ export default function HarvestPage() {
     C: 'bg-muted text-muted-foreground',
   };
 
-  const gradeDescriptions = {
-    A: { fr: 'Excellente qualité - Export', en: 'Excellent quality - Export' },
-    B: { fr: 'Bonne qualité - Marché local', en: 'Good quality - Local market' },
-    C: { fr: 'Qualité moyenne - Transformation', en: 'Average quality - Processing' },
-  };
+  const getGradeDescription = (grade: 'A' | 'B' | 'C') => t(`grade.${grade}`);
 
-  const yieldPotentialLabels = {
-    low: { fr: 'Faible', en: 'Low', color: 'text-destructive' },
-    medium: { fr: 'Moyen', en: 'Medium', color: 'text-warning' },
-    high: { fr: 'Élevé', en: 'High', color: 'text-success' },
-    excellent: { fr: 'Excellent', en: 'Excellent', color: 'text-primary' },
+  const getYieldLabel = (potential: 'low' | 'medium' | 'high' | 'excellent') => {
+    const colors = {
+      low: 'text-destructive',
+      medium: 'text-warning', 
+      high: 'text-success',
+      excellent: 'text-primary',
+    };
+    return { label: t(`yield.${potential}`), color: colors[potential] };
   };
 
   const QualityBar = ({ label, value, isDefect = false }: { label: string; value: number; isDefect?: boolean }) => (
@@ -159,7 +158,7 @@ export default function HarvestPage() {
                     setLocalImageBase64(null);
                   }}
                 >
-                  {language === 'fr' ? 'Changer' : 'Change'}
+                  {t('common.change')}
                 </Button>
               </div>
 
@@ -168,9 +167,7 @@ export default function HarvestPage() {
                 <div className="flex items-center gap-2 text-sm text-accent-foreground">
                   <Sparkles className="w-4 h-4" />
                   <span className="font-medium">
-                    {language === 'fr' 
-                      ? "L'IA analysera qualité, rendement et prix" 
-                      : "AI will analyze quality, yield and price"}
+                    {t('harvest.ai_info')}
                   </span>
                 </div>
               </div>
@@ -188,7 +185,7 @@ export default function HarvestPage() {
                 ) : (
                   <TrendingUp className="w-5 h-5 mr-2" />
                 )}
-                {language === 'fr' ? 'Analyser la qualité' : 'Analyze quality'}
+                {t('harvest.analyze')}
               </Button>
             </div>
           ) : (
@@ -201,13 +198,13 @@ export default function HarvestPage() {
                   </div>
                   <div>
                     <h3 className="font-semibold text-foreground text-sm">
-                      {language === 'fr' ? 'Analyse complète de récolte' : 'Complete harvest analysis'}
+                      {t('harvest.complete_analysis')}
                     </h3>
                     <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-                      <li>• {language === 'fr' ? "Tri qualitatif pour la vente (Grade A, B, C)" : "Quality sorting for sales (Grade A, B, C)"}</li>
-                      <li>• {language === 'fr' ? "Estimation du prix sur les marchés locaux" : "Local market price estimation"}</li>
-                      <li>• {language === 'fr' ? "Estimation du rendement (pour semences)" : "Yield estimation (for seeds)"}</li>
-                      <li>• {language === 'fr' ? "Stratégie de vente optimale" : "Optimal selling strategy"}</li>
+                      <li>• {t('harvest.quality_sorting')}</li>
+                      <li>• {t('harvest.price_estimation')}</li>
+                      <li>• {t('harvest.yield_estimation')}</li>
+                      <li>• {t('harvest.selling_strategy')}</li>
                     </ul>
                   </div>
                 </div>
@@ -269,12 +266,10 @@ export default function HarvestPage() {
           </div>
           <Loader2 className="w-8 h-8 text-accent animate-spin mb-4" />
           <p className="text-lg font-semibold text-foreground">
-            {language === 'fr' ? 'Analyse en cours...' : 'Analyzing...'}
+            {t('harvest.analyzing')}
           </p>
           <p className="text-sm text-muted-foreground mt-1 text-center">
-            {language === 'fr' 
-              ? 'Qualité, rendement et prix estimés' 
-              : 'Quality, yield and price estimation'}
+            {t('harvest.quality_yield_price')}
           </p>
         </div>
       )}
@@ -306,7 +301,7 @@ export default function HarvestPage() {
                       <p className="text-xs text-muted-foreground">{result.detected_crop_local}</p>
                     )}
                     <p className="text-sm text-muted-foreground">
-                      {gradeDescriptions[result.grade][language]}
+                      {getGradeDescription(result.grade)}
                     </p>
                   </div>
                 </div>
@@ -379,10 +374,10 @@ export default function HarvestPage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">
-                    {language === 'fr' ? 'Potentiel' : 'Potential'}
+                    {t('harvest.potential')}
                   </span>
-                  <span className={cn("font-bold", yieldPotentialLabels[result.yield_estimation.yield_potential].color)}>
-                    {yieldPotentialLabels[result.yield_estimation.yield_potential][language]}
+                  <span className={cn("font-bold", getYieldLabel(result.yield_estimation.yield_potential).color)}>
+                    {getYieldLabel(result.yield_estimation.yield_potential).label}
                   </span>
                 </div>
                 {result.yield_estimation.yield_factors.length > 0 && (
@@ -553,7 +548,7 @@ export default function HarvestPage() {
             onClick={resetAnalysis}
           >
             <RefreshCw className="w-4 h-4 mr-2" />
-            {language === 'fr' ? 'Nouvelle analyse' : 'New analysis'}
+            {t('harvest.new_analysis')}
           </Button>
         </div>
       )}
