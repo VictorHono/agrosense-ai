@@ -46,6 +46,7 @@ export default function DiagnosePage() {
     maxRetries,
     isReady,
     isCompressing,
+    isRestored,
     handleFileSelect,
     analyze,
     reset,
@@ -53,23 +54,28 @@ export default function DiagnosePage() {
     clearImage,
   } = useDiagnosis(language);
 
+  // Track if we already logged this result (to prevent double-logging on re-renders)
+  const hasLoggedRef = useRef(false);
+
   // Track analysis time
   useEffect(() => {
     if (step === 'analyzing') {
       analysisStartRef.current = Date.now();
+      hasLoggedRef.current = false; // Reset logging flag for new analysis
     } else if (step === 'result' && analysisStartRef.current) {
       setAnalysisTime(Math.round((Date.now() - analysisStartRef.current) / 1000));
       analysisStartRef.current = null;
     }
   }, [step]);
 
-  // Save to history when result is received
+  // Save to history when result is received (only for NEW diagnoses, not restored ones)
   useEffect(() => {
-    if (step === 'result' && result && imageUrl) {
+    if (step === 'result' && result && imageUrl && !isRestored && !hasLoggedRef.current) {
+      hasLoggedRef.current = true;
       saveDiagnosisToHistory(imageUrl, result);
       logDiagnosisActivity();
     }
-  }, [step, result, imageUrl]);
+  }, [step, result, imageUrl, isRestored]);
 
   const logDiagnosisActivity = async () => {
     if (!user || !result) return;
