@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { 
   Globe, FileText, Loader2, Languages, Plus, Edit2, Trash2, 
   Check, X, Search, Copy, Sparkles, Download, Upload, AlertCircle,
-  ChevronDown, ChevronUp
+  ChevronDown, AlertTriangle, Volume2, BookOpen, RefreshCw
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -36,8 +36,17 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { TranslationEditor } from '@/components/translation/TranslationEditor';
+import { TTSButton } from '@/components/translation/TTSButton';
 
 interface AppLanguage {
   id: string;
@@ -48,6 +57,9 @@ interface AppLanguage {
   is_active: boolean;
   is_default: boolean;
   translation_progress: number;
+  dialect_info?: string;
+  tts_enabled?: boolean;
+  region?: string;
   created_at: string;
 }
 
@@ -57,21 +69,38 @@ interface Translation {
   translation_key: string;
   translation_value: string;
   category: string;
+  is_ai_generated?: boolean;
+  is_validated?: boolean;
+  pronunciation?: string;
+  dialect_variant?: string;
+  usage_example?: string;
+  notes?: string;
   created_at: string;
 }
 
-interface TranslationCategory {
-  name: string;
-  keys: Translation[];
-  isOpen: boolean;
+interface MissingKey {
+  id: string;
+  translation_key: string;
+  language_code: string;
+  fallback_used: string | null;
+  page_context: string | null;
+  occurrence_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  is_resolved: boolean;
 }
 
 export default function AdminLanguagesPage() {
   const [languages, setLanguages] = useState<AppLanguage[]>([]);
   const [translations, setTranslations] = useState<Translation[]>([]);
+  const [missingKeys, setMissingKeys] = useState<MissingKey[]>([]);
   const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  
+  // Stats
+  const [aiPendingCount, setAiPendingCount] = useState(0);
+  const [missingKeysCount, setMissingKeysCount] = useState(0);
   
   // Dialog states
   const [showAddLanguage, setShowAddLanguage] = useState(false);
@@ -79,6 +108,7 @@ export default function AdminLanguagesPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showAddTranslation, setShowAddTranslation] = useState(false);
   const [showAITranslate, setShowAITranslate] = useState(false);
+  const [showBatchTTS, setShowBatchTTS] = useState(false);
   
   // Form states
   const [newLanguage, setNewLanguage] = useState({
@@ -86,19 +116,23 @@ export default function AdminLanguagesPage() {
     name: '',
     native_name: '',
     flag: '🌍',
-    is_active: true
+    is_active: true,
+    dialect_info: '',
+    region: ''
   });
   const [editingLanguage, setEditingLanguage] = useState<AppLanguage | null>(null);
   const [deletingLanguage, setDeletingLanguage] = useState<AppLanguage | null>(null);
   const [newTranslation, setNewTranslation] = useState({
     key: '',
     value: '',
-    category: 'general'
+    category: 'general',
+    pronunciation: '',
+    usage_example: ''
   });
   
-  // Search and filter
+  // Filters
   const [searchQuery, setSearchQuery] = useState('');
-  const [categoryFilters, setCategoryFilters] = useState<Record<string, boolean>>({});
+  const [filterValidation, setFilterValidation] = useState<'all' | 'pending' | 'validated'>('all');
 
   // Fetch languages
   const fetchLanguages = useCallback(async () => {
@@ -134,6 +168,10 @@ export default function AdminLanguagesPage() {
       if (error) throw error;
       setTranslations(data || []);
       
+      // Count AI pending validations
+      const pending = data?.filter(t => t.is_ai_generated && !t.is_validated).length || 0;
+      setAiPendingCount(pending);
+      
       // Update progress
       await updateTranslationProgress(langCode, data?.length || 0);
     } catch (error) {
@@ -141,10 +179,32 @@ export default function AdminLanguagesPage() {
     }
   }, []);
 
+  // Fetch missing keys
+  const fetchMissingKeys = useCallback(async (langCode?: string) => {
+    try {
+      let query = supabase
+        .from('translation_missing_keys')
+        .select('*')
+        .eq('is_resolved', false)
+        .order('occurrence_count', { ascending: false });
+      
+      if (langCode) {
+        query = query.eq('language_code', langCode);
+      }
+      
+      const { data, error } = await query.limit(100);
+      
+      if (error) throw error;
+      setMissingKeys(data || []);
+      setMissingKeysCount(data?.length || 0);
+    } catch (error) {
+      console.error('Error fetching missing keys:', error);
+    }
+  }, []);
+
   // Update translation progress
   const updateTranslationProgress = async (langCode: string, count: number) => {
     try {
-      // Get total keys from French (reference)
       const { data: frData } = await supabase
         .from('app_translations')
         .select('id')
@@ -166,16 +226,18 @@ export default function AdminLanguagesPage() {
     const init = async () => {
       setLoading(true);
       await fetchLanguages();
+      await fetchMissingKeys();
       setLoading(false);
     };
     init();
-  }, [fetchLanguages]);
+  }, [fetchLanguages, fetchMissingKeys]);
 
   useEffect(() => {
     if (selectedLanguage) {
       fetchTranslations(selectedLanguage);
+      fetchMissingKeys(selectedLanguage);
     }
-  }, [selectedLanguage, fetchTranslations]);
+  }, [selectedLanguage, fetchTranslations, fetchMissingKeys]);
 
   // Add new language
   const handleAddLanguage = async () => {
@@ -194,6 +256,8 @@ export default function AdminLanguagesPage() {
           native_name: newLanguage.native_name,
           flag: newLanguage.flag,
           is_active: newLanguage.is_active,
+          dialect_info: newLanguage.dialect_info || null,
+          region: newLanguage.region || null,
           translation_progress: 0
         }]);
 
@@ -201,7 +265,7 @@ export default function AdminLanguagesPage() {
 
       toast.success('Langue ajoutée avec succès!');
       setShowAddLanguage(false);
-      setNewLanguage({ code: '', name: '', native_name: '', flag: '🌍', is_active: true });
+      setNewLanguage({ code: '', name: '', native_name: '', flag: '🌍', is_active: true, dialect_info: '', region: '' });
       fetchLanguages();
     } catch (error: any) {
       console.error('Error adding language:', error);
@@ -223,7 +287,10 @@ export default function AdminLanguagesPage() {
           name: editingLanguage.name,
           native_name: editingLanguage.native_name,
           flag: editingLanguage.flag,
-          is_active: editingLanguage.is_active
+          is_active: editingLanguage.is_active,
+          dialect_info: editingLanguage.dialect_info,
+          tts_enabled: editingLanguage.tts_enabled,
+          region: editingLanguage.region
         })
         .eq('id', editingLanguage.id);
 
@@ -284,14 +351,18 @@ export default function AdminLanguagesPage() {
           language_code: selectedLanguage,
           translation_key: newTranslation.key,
           translation_value: newTranslation.value,
-          category: newTranslation.category
+          category: newTranslation.category,
+          pronunciation: newTranslation.pronunciation || null,
+          usage_example: newTranslation.usage_example || null,
+          is_ai_generated: false,
+          is_validated: true
         }]);
 
       if (error) throw error;
 
       toast.success('Traduction ajoutée!');
       setShowAddTranslation(false);
-      setNewTranslation({ key: '', value: '', category: 'general' });
+      setNewTranslation({ key: '', value: '', category: 'general', pronunciation: '', usage_example: '' });
       fetchTranslations(selectedLanguage);
     } catch (error: any) {
       console.error('Error adding translation:', error);
@@ -301,24 +372,16 @@ export default function AdminLanguagesPage() {
     }
   };
 
-  // Update translation
-  const handleUpdateTranslation = async (translation: Translation, newValue: string) => {
-    try {
-      const { error } = await supabase
-        .from('app_translations')
-        .update({ translation_value: newValue })
-        .eq('id', translation.id);
-
-      if (error) throw error;
-
-      setTranslations(prev => 
-        prev.map(t => t.id === translation.id ? { ...t, translation_value: newValue } : t)
-      );
-      toast.success('Traduction mise à jour!');
-    } catch (error: any) {
-      console.error('Error updating translation:', error);
-      toast.error('Erreur lors de la mise à jour');
-    }
+  // Update translation from editor
+  const handleTranslationUpdate = (updated: Translation) => {
+    setTranslations(prev => 
+      prev.map(t => t.id === updated.id ? updated : t)
+    );
+    // Recalculate pending count
+    const pending = translations.filter(t => 
+      t.id === updated.id ? (updated.is_ai_generated && !updated.is_validated) : (t.is_ai_generated && !t.is_validated)
+    ).length;
+    setAiPendingCount(pending);
   };
 
   // Delete translation
@@ -348,7 +411,6 @@ export default function AdminLanguagesPage() {
 
     setSaving(true);
     try {
-      // Get French translations as reference
       const { data: frTranslations, error: frError } = await supabase
         .from('app_translations')
         .select('translation_key, translation_value, category')
@@ -356,17 +418,17 @@ export default function AdminLanguagesPage() {
 
       if (frError) throw frError;
 
-      // Get existing keys for this language
       const existingKeys = new Set(translations.map(t => t.translation_key));
 
-      // Filter out already existing keys
       const newTranslations = frTranslations
         ?.filter(t => !existingKeys.has(t.translation_key))
         .map(t => ({
           language_code: selectedLanguage,
           translation_key: t.translation_key,
           translation_value: `[${selectedLanguage.toUpperCase()}] ${t.translation_value}`,
-          category: t.category
+          category: t.category,
+          is_ai_generated: false,
+          is_validated: false
         })) || [];
 
       if (newTranslations.length === 0) {
@@ -391,7 +453,7 @@ export default function AdminLanguagesPage() {
     }
   };
 
-  // AI Translation
+  // AI Translation with validation workflow
   const handleAITranslate = async () => {
     if (!selectedLanguage) return;
     
@@ -402,9 +464,9 @@ export default function AdminLanguagesPage() {
     setShowAITranslate(true);
 
     try {
-      // Get untranslated keys (those starting with language code marker)
       const untranslated = translations.filter(t => 
-        t.translation_value.startsWith(`[${selectedLanguage.toUpperCase()}]`)
+        t.translation_value.startsWith(`[${selectedLanguage.toUpperCase()}]`) ||
+        (!t.is_validated && t.is_ai_generated)
       );
 
       if (untranslated.length === 0) {
@@ -414,7 +476,6 @@ export default function AdminLanguagesPage() {
         return;
       }
 
-      // Call AI translation edge function
       const { data, error } = await supabase.functions.invoke('translate-content', {
         body: {
           translations: untranslated.map(t => ({
@@ -430,15 +491,19 @@ export default function AdminLanguagesPage() {
       if (error) throw error;
 
       if (data?.translations) {
-        // Update all translated entries
+        // Update with AI generated flag and pending validation
         for (const item of data.translations) {
           await supabase
             .from('app_translations')
-            .update({ translation_value: item.translatedText })
+            .update({ 
+              translation_value: item.translatedText,
+              is_ai_generated: true,
+              is_validated: false // Mark as pending validation
+            })
             .eq('id', item.id);
         }
 
-        toast.success(`${data.translations.length} traductions IA effectuées!`);
+        toast.success(`${data.translations.length} traductions IA effectuées! À valider.`);
         fetchTranslations(selectedLanguage);
       }
     } catch (error: any) {
@@ -450,14 +515,82 @@ export default function AdminLanguagesPage() {
     }
   };
 
+  // Validate all AI translations
+  const handleValidateAll = async () => {
+    if (!selectedLanguage) return;
+    
+    const pendingTranslations = translations.filter(t => t.is_ai_generated && !t.is_validated);
+    if (pendingTranslations.length === 0) {
+      toast.info('Aucune traduction à valider');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('app_translations')
+        .update({ 
+          is_validated: true,
+          validated_at: new Date().toISOString()
+        })
+        .eq('language_code', selectedLanguage)
+        .eq('is_ai_generated', true)
+        .eq('is_validated', false);
+
+      if (error) throw error;
+
+      toast.success(`${pendingTranslations.length} traductions validées!`);
+      fetchTranslations(selectedLanguage);
+    } catch (error) {
+      console.error('Error validating translations:', error);
+      toast.error('Erreur lors de la validation');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Resolve missing key by creating translation
+  const handleResolveMissingKey = async (missingKey: MissingKey) => {
+    setNewTranslation({
+      key: missingKey.translation_key,
+      value: missingKey.fallback_used || '',
+      category: missingKey.translation_key.split('.')[0] || 'general',
+      pronunciation: '',
+      usage_example: ''
+    });
+    setShowAddTranslation(true);
+  };
+
+  // Mark missing key as resolved
+  const handleMarkResolved = async (id: string) => {
+    try {
+      await supabase
+        .from('translation_missing_keys')
+        .update({ is_resolved: true, resolved_at: new Date().toISOString() })
+        .eq('id', id);
+
+      setMissingKeys(prev => prev.filter(k => k.id !== id));
+      setMissingKeysCount(prev => prev - 1);
+      toast.success('Clé marquée comme résolue');
+    } catch (error) {
+      console.error('Error resolving key:', error);
+      toast.error('Erreur');
+    }
+  };
+
   // Export translations
   const handleExport = () => {
     if (!selectedLanguage || translations.length === 0) return;
 
     const exportData = translations.reduce((acc, t) => {
-      acc[t.translation_key] = t.translation_value;
+      acc[t.translation_key] = {
+        value: t.translation_value,
+        pronunciation: t.pronunciation,
+        usage_example: t.usage_example,
+        is_validated: t.is_validated
+      };
       return acc;
-    }, {} as Record<string, string>);
+    }, {} as Record<string, any>);
 
     const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -478,14 +611,17 @@ export default function AdminLanguagesPage() {
       const text = await file.text();
       const data = JSON.parse(text);
 
-      const entries = Object.entries(data).map(([key, value]) => ({
+      const entries = Object.entries(data).map(([key, val]: [string, any]) => ({
         language_code: selectedLanguage,
         translation_key: key,
-        translation_value: value as string,
-        category: key.split('.')[0] || 'general'
+        translation_value: typeof val === 'string' ? val : val.value,
+        category: key.split('.')[0] || 'general',
+        pronunciation: typeof val === 'object' ? val.pronunciation : null,
+        usage_example: typeof val === 'object' ? val.usage_example : null,
+        is_ai_generated: false,
+        is_validated: true
       }));
 
-      // Upsert translations
       const { error } = await supabase
         .from('app_translations')
         .upsert(entries, { onConflict: 'language_code,translation_key' });
@@ -500,15 +636,33 @@ export default function AdminLanguagesPage() {
     }
   };
 
+  // Filter translations
+  const getFilteredTranslations = () => {
+    let filtered = translations;
+    
+    // Search filter
+    if (searchQuery) {
+      filtered = filtered.filter(t => 
+        t.translation_key.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        t.translation_value.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+    
+    // Validation filter
+    if (filterValidation === 'pending') {
+      filtered = filtered.filter(t => t.is_ai_generated && !t.is_validated);
+    } else if (filterValidation === 'validated') {
+      filtered = filtered.filter(t => t.is_validated);
+    }
+    
+    return filtered;
+  };
+
   // Group translations by category
   const getGroupedTranslations = () => {
-    const filtered = translations.filter(t => 
-      !searchQuery || 
-      t.translation_key.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.translation_value.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-
+    const filtered = getFilteredTranslations();
     const grouped: Record<string, Translation[]> = {};
+    
     filtered.forEach(t => {
       const cat = t.category || 'general';
       if (!grouped[cat]) grouped[cat] = [];
@@ -520,7 +674,6 @@ export default function AdminLanguagesPage() {
 
   const groupedTranslations = getGroupedTranslations();
   const categories = Object.keys(groupedTranslations);
-
   const selectedLang = languages.find(l => l.code === selectedLanguage);
 
   if (loading) {
@@ -541,7 +694,7 @@ export default function AdminLanguagesPage() {
             Gestion des Langues
           </h1>
           <p className="text-muted-foreground">
-            Système multilingue complet - Ajoutez des langues locales pour toucher tous les agriculteurs
+            Système multilingue avec validation IA et synthèse vocale
           </p>
         </div>
         <Button onClick={() => setShowAddLanguage(true)} className="gap-2">
@@ -551,7 +704,7 @@ export default function AdminLanguagesPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <Card>
           <CardContent className="p-4">
             <div className="flex items-start justify-between">
@@ -572,25 +725,39 @@ export default function AdminLanguagesPage() {
           <CardContent className="p-4">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Total langues</p>
-                <p className="text-2xl font-bold text-foreground mt-1">{languages.length}</p>
+                <p className="text-sm text-muted-foreground">Traductions</p>
+                <p className="text-2xl font-bold text-foreground mt-1">{translations.length}</p>
               </div>
               <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-info/10 text-info">
-                <Languages className="w-5 h-5" />
+                <FileText className="w-5 h-5" />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className={aiPendingCount > 0 ? 'border-warning' : ''}>
           <CardContent className="p-4">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Traductions</p>
-                <p className="text-2xl font-bold text-foreground mt-1">{translations.length}</p>
+                <p className="text-sm text-muted-foreground">À valider (IA)</p>
+                <p className="text-2xl font-bold text-warning mt-1">{aiPendingCount}</p>
               </div>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-success/10 text-success">
-                <FileText className="w-5 h-5" />
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-warning/10 text-warning">
+                <Sparkles className="w-5 h-5" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className={missingKeysCount > 0 ? 'border-destructive' : ''}>
+          <CardContent className="p-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Clés manquantes</p>
+                <p className="text-2xl font-bold text-destructive mt-1">{missingKeysCount}</p>
+              </div>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-destructive/10 text-destructive">
+                <AlertTriangle className="w-5 h-5" />
               </div>
             </div>
           </CardContent>
@@ -603,8 +770,8 @@ export default function AdminLanguagesPage() {
                 <p className="text-sm text-muted-foreground">Catégories</p>
                 <p className="text-2xl font-bold text-foreground mt-1">{categories.length}</p>
               </div>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-warning/10 text-warning">
-                <Copy className="w-5 h-5" />
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-success/10 text-success">
+                <BookOpen className="w-5 h-5" />
               </div>
             </div>
           </CardContent>
@@ -620,6 +787,15 @@ export default function AdminLanguagesPage() {
           <TabsTrigger value="translations" className="gap-2">
             <FileText className="w-4 h-4" />
             Traductions
+          </TabsTrigger>
+          <TabsTrigger value="missing" className="gap-2 relative">
+            <AlertTriangle className="w-4 h-4" />
+            Clés manquantes
+            {missingKeysCount > 0 && (
+              <Badge variant="destructive" className="ml-1 h-5 min-w-5 text-xs">
+                {missingKeysCount}
+              </Badge>
+            )}
           </TabsTrigger>
         </TabsList>
 
@@ -643,15 +819,27 @@ export default function AdminLanguagesPage() {
                         <p className="text-sm text-muted-foreground">{lang.name}</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 flex-wrap justify-end">
                       {lang.is_default && (
                         <Badge variant="default" className="text-xs">Par défaut</Badge>
                       )}
                       {!lang.is_active && (
                         <Badge variant="secondary" className="text-xs">Inactif</Badge>
                       )}
+                      {lang.tts_enabled && (
+                        <Badge variant="outline" className="text-xs">
+                          <Volume2 className="w-3 h-3 mr-1" />
+                          TTS
+                        </Badge>
+                      )}
                     </div>
                   </div>
+
+                  {lang.dialect_info && (
+                    <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
+                      {lang.dialect_info}
+                    </p>
+                  )}
 
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
@@ -708,7 +896,12 @@ export default function AdminLanguagesPage() {
                       <span className="text-4xl">{selectedLang.flag}</span>
                       <div>
                         <h3 className="text-lg font-bold text-foreground">{selectedLang.native_name}</h3>
-                        <p className="text-sm text-muted-foreground">{selectedLang.name} • {translations.length} traductions</p>
+                        <p className="text-sm text-muted-foreground">
+                          {selectedLang.name} • {translations.length} traductions
+                          {aiPendingCount > 0 && (
+                            <span className="text-warning ml-2">• {aiPendingCount} à valider</span>
+                          )}
+                        </p>
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -720,6 +913,12 @@ export default function AdminLanguagesPage() {
                         <Sparkles className="w-4 h-4 mr-1" />
                         Traduire IA
                       </Button>
+                      {aiPendingCount > 0 && (
+                        <Button variant="outline" size="sm" onClick={handleValidateAll} disabled={saving} className="text-success border-success/50">
+                          <Check className="w-4 h-4 mr-1" />
+                          Valider tout ({aiPendingCount})
+                        </Button>
+                      )}
                       <Button variant="outline" size="sm" onClick={handleExport}>
                         <Download className="w-4 h-4 mr-1" />
                         Exporter
@@ -731,7 +930,7 @@ export default function AdminLanguagesPage() {
                             Importer
                           </span>
                         </Button>
-                        <input type="file" accept=".json" className="hidden" onChange={handleImport} />
+                        <input type="file" accept=".json,.csv" className="hidden" onChange={handleImport} />
                       </label>
                       <Button size="sm" onClick={() => setShowAddTranslation(true)}>
                         <Plus className="w-4 h-4 mr-1" />
@@ -742,15 +941,27 @@ export default function AdminLanguagesPage() {
                 </CardContent>
               </Card>
 
-              {/* Search */}
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  placeholder="Rechercher une traduction..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                />
+              {/* Filters */}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Rechercher une traduction..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-10"
+                  />
+                </div>
+                <Select value={filterValidation} onValueChange={(v: any) => setFilterValidation(v)}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Filtrer par statut" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Toutes</SelectItem>
+                    <SelectItem value="pending">À valider (IA)</SelectItem>
+                    <SelectItem value="validated">Validées</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Translations by Category */}
@@ -780,7 +991,7 @@ export default function AdminLanguagesPage() {
                     <Collapsible key={category} defaultOpen={true}>
                       <Card>
                         <CollapsibleTrigger asChild>
-                          <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors">
+                          <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors py-3">
                             <div className="flex items-center justify-between">
                               <CardTitle className="text-base capitalize flex items-center gap-2">
                                 <FileText className="w-4 h-4 text-primary" />
@@ -788,23 +999,29 @@ export default function AdminLanguagesPage() {
                                 <Badge variant="secondary" className="ml-2">
                                   {groupedTranslations[category]?.length || 0}
                                 </Badge>
+                                {groupedTranslations[category]?.some(t => t.is_ai_generated && !t.is_validated) && (
+                                  <Badge variant="outline" className="text-warning border-warning/50">
+                                    <Sparkles className="w-3 h-3 mr-1" />
+                                    À valider
+                                  </Badge>
+                                )}
                               </CardTitle>
                               <ChevronDown className="w-4 h-4 text-muted-foreground" />
                             </div>
                           </CardHeader>
                         </CollapsibleTrigger>
                         <CollapsibleContent>
-                          <CardContent className="pt-0">
-                            <div className="space-y-2">
-                              {groupedTranslations[category]?.map(translation => (
-                                <TranslationRow
-                                  key={translation.id}
-                                  translation={translation}
-                                  onUpdate={handleUpdateTranslation}
-                                  onDelete={handleDeleteTranslation}
-                                />
-                              ))}
-                            </div>
+                          <CardContent className="pt-0 space-y-3">
+                            {groupedTranslations[category]?.map(translation => (
+                              <TranslationEditor
+                                key={translation.id}
+                                translation={translation}
+                                onUpdate={handleTranslationUpdate}
+                                onDelete={handleDeleteTranslation}
+                                showMetadata={true}
+                                languageName={selectedLang.native_name}
+                              />
+                            ))}
                           </CardContent>
                         </CollapsibleContent>
                       </Card>
@@ -825,11 +1042,102 @@ export default function AdminLanguagesPage() {
             </Card>
           )}
         </TabsContent>
+
+        {/* Missing Keys Tab */}
+        <TabsContent value="missing" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-warning" />
+                    Clés de traduction manquantes
+                  </CardTitle>
+                  <CardDescription>
+                    Ces clés ont été détectées comme manquantes lors de l'utilisation de l'application
+                  </CardDescription>
+                </div>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => fetchMissingKeys(selectedLanguage || undefined)}
+                >
+                  <RefreshCw className="w-4 h-4 mr-1" />
+                  Actualiser
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {missingKeys.length === 0 ? (
+                <div className="text-center py-8">
+                  <Check className="w-12 h-12 text-success mx-auto mb-4" />
+                  <h3 className="font-semibold text-foreground mb-2">Aucune clé manquante!</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Toutes les traductions sont à jour.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {missingKeys.map(key => (
+                    <div 
+                      key={key.id} 
+                      className="flex items-start justify-between gap-4 p-3 rounded-lg border border-warning/20 bg-warning/5"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <code className="text-sm font-mono bg-muted px-2 py-0.5 rounded">
+                            {key.translation_key}
+                          </code>
+                          <Badge variant="outline" className="text-xs">
+                            {key.language_code}
+                          </Badge>
+                          <Badge variant="secondary" className="text-xs">
+                            {key.occurrence_count}x
+                          </Badge>
+                        </div>
+                        {key.fallback_used && (
+                          <p className="text-sm text-muted-foreground mt-1">
+                            Fallback: "{key.fallback_used}"
+                          </p>
+                        )}
+                        {key.page_context && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Page: {key.page_context}
+                          </p>
+                        )}
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Dernière vue: {new Date(key.last_seen_at).toLocaleDateString('fr-FR')}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Button 
+                          size="sm" 
+                          variant="outline"
+                          onClick={() => handleResolveMissingKey(key)}
+                        >
+                          <Plus className="w-3 h-3 mr-1" />
+                          Créer
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          variant="ghost"
+                          onClick={() => handleMarkResolved(key.id)}
+                        >
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       {/* Add Language Dialog */}
       <Dialog open={showAddLanguage} onOpenChange={setShowAddLanguage}>
-        <DialogContent>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Ajouter une nouvelle langue</DialogTitle>
             <DialogDescription>
@@ -842,7 +1150,7 @@ export default function AdminLanguagesPage() {
                 <Label htmlFor="code">Code langue *</Label>
                 <Input
                   id="code"
-                  placeholder="ex: ghomala"
+                  placeholder="ex: ghm"
                   value={newLanguage.code}
                   onChange={(e) => setNewLanguage({ ...newLanguage, code: e.target.value })}
                 />
@@ -857,22 +1165,42 @@ export default function AdminLanguagesPage() {
                 />
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="name">Nom en anglais *</Label>
+                <Input
+                  id="name"
+                  placeholder="ex: Ghomala"
+                  value={newLanguage.name}
+                  onChange={(e) => setNewLanguage({ ...newLanguage, name: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="native_name">Nom natif *</Label>
+                <Input
+                  id="native_name"
+                  placeholder="ex: Ghɔmálá'"
+                  value={newLanguage.native_name}
+                  onChange={(e) => setNewLanguage({ ...newLanguage, native_name: e.target.value })}
+                />
+              </div>
+            </div>
             <div className="space-y-2">
-              <Label htmlFor="name">Nom en anglais *</Label>
+              <Label htmlFor="region">Région</Label>
               <Input
-                id="name"
-                placeholder="ex: Ghomala"
-                value={newLanguage.name}
-                onChange={(e) => setNewLanguage({ ...newLanguage, name: e.target.value })}
+                id="region"
+                placeholder="ex: Ouest, Littoral..."
+                value={newLanguage.region}
+                onChange={(e) => setNewLanguage({ ...newLanguage, region: e.target.value })}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="native_name">Nom natif *</Label>
-              <Input
-                id="native_name"
-                placeholder="ex: Ghɔmálá'"
-                value={newLanguage.native_name}
-                onChange={(e) => setNewLanguage({ ...newLanguage, native_name: e.target.value })}
+              <Label htmlFor="dialect_info">Informations dialectales</Label>
+              <Textarea
+                id="dialect_info"
+                placeholder="Décrivez les variantes dialectales, zones géographiques..."
+                value={newLanguage.dialect_info}
+                onChange={(e) => setNewLanguage({ ...newLanguage, dialect_info: e.target.value })}
               />
             </div>
             <div className="flex items-center gap-2">
@@ -898,7 +1226,7 @@ export default function AdminLanguagesPage() {
 
       {/* Edit Language Dialog */}
       <Dialog open={showEditLanguage} onOpenChange={setShowEditLanguage}>
-        <DialogContent>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Modifier la langue</DialogTitle>
           </DialogHeader>
@@ -918,29 +1246,57 @@ export default function AdminLanguagesPage() {
                   />
                 </div>
               </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit_name">Nom en anglais</Label>
+                  <Input
+                    id="edit_name"
+                    value={editingLanguage.name}
+                    onChange={(e) => setEditingLanguage({ ...editingLanguage, name: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit_native_name">Nom natif</Label>
+                  <Input
+                    id="edit_native_name"
+                    value={editingLanguage.native_name}
+                    onChange={(e) => setEditingLanguage({ ...editingLanguage, native_name: e.target.value })}
+                  />
+                </div>
+              </div>
               <div className="space-y-2">
-                <Label htmlFor="edit_name">Nom en anglais</Label>
+                <Label htmlFor="edit_region">Région</Label>
                 <Input
-                  id="edit_name"
-                  value={editingLanguage.name}
-                  onChange={(e) => setEditingLanguage({ ...editingLanguage, name: e.target.value })}
+                  id="edit_region"
+                  value={editingLanguage.region || ''}
+                  onChange={(e) => setEditingLanguage({ ...editingLanguage, region: e.target.value })}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit_native_name">Nom natif</Label>
-                <Input
-                  id="edit_native_name"
-                  value={editingLanguage.native_name}
-                  onChange={(e) => setEditingLanguage({ ...editingLanguage, native_name: e.target.value })}
+                <Label htmlFor="edit_dialect">Informations dialectales</Label>
+                <Textarea
+                  id="edit_dialect"
+                  value={editingLanguage.dialect_info || ''}
+                  onChange={(e) => setEditingLanguage({ ...editingLanguage, dialect_info: e.target.value })}
                 />
               </div>
-              <div className="flex items-center gap-2">
-                <Switch
-                  id="edit_is_active"
-                  checked={editingLanguage.is_active}
-                  onCheckedChange={(checked) => setEditingLanguage({ ...editingLanguage, is_active: checked })}
-                />
-                <Label htmlFor="edit_is_active">Langue active</Label>
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="edit_is_active"
+                    checked={editingLanguage.is_active}
+                    onCheckedChange={(checked) => setEditingLanguage({ ...editingLanguage, is_active: checked })}
+                  />
+                  <Label htmlFor="edit_is_active">Langue active</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="edit_tts"
+                    checked={editingLanguage.tts_enabled || false}
+                    onCheckedChange={(checked) => setEditingLanguage({ ...editingLanguage, tts_enabled: checked })}
+                  />
+                  <Label htmlFor="edit_tts">Activer la synthèse vocale (TTS)</Label>
+                </div>
               </div>
             </div>
           )}
@@ -1004,13 +1360,33 @@ export default function AdminLanguagesPage() {
                 onChange={(e) => setNewTranslation({ ...newTranslation, value: e.target.value })}
               />
             </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="trans_category">Catégorie</Label>
+                <Input
+                  id="trans_category"
+                  placeholder="ex: navigation"
+                  value={newTranslation.category}
+                  onChange={(e) => setNewTranslation({ ...newTranslation, category: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="trans_pronunciation">Prononciation</Label>
+                <Input
+                  id="trans_pronunciation"
+                  placeholder="ex: Ntsé-mié-pi"
+                  value={newTranslation.pronunciation}
+                  onChange={(e) => setNewTranslation({ ...newTranslation, pronunciation: e.target.value })}
+                />
+              </div>
+            </div>
             <div className="space-y-2">
-              <Label htmlFor="trans_category">Catégorie</Label>
+              <Label htmlFor="trans_usage">Exemple d'utilisation</Label>
               <Input
-                id="trans_category"
-                placeholder="ex: navigation, home, common"
-                value={newTranslation.category}
-                onChange={(e) => setNewTranslation({ ...newTranslation, category: e.target.value })}
+                id="trans_usage"
+                placeholder="Phrase d'exemple en contexte"
+                value={newTranslation.usage_example}
+                onChange={(e) => setNewTranslation({ ...newTranslation, usage_example: e.target.value })}
               />
             </div>
           </div>
@@ -1041,92 +1417,11 @@ export default function AdminLanguagesPage() {
               L'IA traduit vos contenus vers {selectedLang?.native_name}...
             </p>
             <p className="text-sm text-muted-foreground mt-2">
-              Cela peut prendre quelques secondes.
+              Les traductions seront marquées "à valider" pour révision.
             </p>
           </div>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-// Translation Row Component
-function TranslationRow({ 
-  translation, 
-  onUpdate, 
-  onDelete 
-}: { 
-  translation: Translation;
-  onUpdate: (t: Translation, value: string) => void;
-  onDelete: (id: string) => void;
-}) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [value, setValue] = useState(translation.translation_value);
-
-  const handleSave = () => {
-    if (value !== translation.translation_value) {
-      onUpdate(translation, value);
-    }
-    setIsEditing(false);
-  };
-
-  const handleCancel = () => {
-    setValue(translation.translation_value);
-    setIsEditing(false);
-  };
-
-  const needsTranslation = translation.translation_value.startsWith('[');
-
-  return (
-    <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-      needsTranslation ? 'bg-warning/5 border-warning/20' : 'bg-muted/30 border-border'
-    }`}>
-      <div className="flex-1 min-w-0">
-        <p className="text-xs font-mono text-muted-foreground mb-1">{translation.translation_key}</p>
-        {isEditing ? (
-          <Textarea
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            className="min-h-[60px]"
-            autoFocus
-          />
-        ) : (
-          <p className={`text-sm ${needsTranslation ? 'text-warning' : 'text-foreground'}`}>
-            {translation.translation_value}
-          </p>
-        )}
-      </div>
-      <div className="flex items-center gap-1 shrink-0">
-        {isEditing ? (
-          <>
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleSave}>
-              <Check className="w-4 h-4 text-success" />
-            </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleCancel}>
-              <X className="w-4 h-4 text-destructive" />
-            </Button>
-          </>
-        ) : (
-          <>
-            {needsTranslation && (
-              <Badge variant="outline" className="text-xs text-warning border-warning/50 mr-1">
-                À traduire
-              </Badge>
-            )}
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setIsEditing(true)}>
-              <Edit2 className="w-4 h-4" />
-            </Button>
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              className="h-8 w-8 text-destructive hover:bg-destructive/10"
-              onClick={() => onDelete(translation.id)}
-            >
-              <Trash2 className="w-4 h-4" />
-            </Button>
-          </>
-        )}
-      </div>
     </div>
   );
 }
