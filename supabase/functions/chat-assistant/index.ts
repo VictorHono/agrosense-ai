@@ -328,7 +328,7 @@ serve(async (req) => {
   }
 
   try {
-    const { messages, language = "fr", region = "centre", session_id } = await req.json();
+    const { messages, language = "fr", session_id, local_context } = await req.json();
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return new Response(
@@ -362,11 +362,94 @@ serve(async (req) => {
       );
     }
 
+    // Build rich local context section
+    let localContextSection = "";
+    if (local_context) {
+      localContextSection = `
+--- CONTEXTE LOCAL DE L'AGRICULTEUR ---
+`;
+      // Position
+      if (local_context.latitude && local_context.longitude) {
+        localContextSection += `📍 POSITION GPS: ${local_context.latitude.toFixed(4)}°N, ${local_context.longitude.toFixed(4)}°E\n`;
+        localContextSection += `   Source: ${local_context.position_source === 'gps' ? 'GPS précis' : local_context.position_source === 'manual' ? 'Sélection manuelle' : 'Cache'}\n`;
+      }
+      
+      // Altitude
+      if (local_context.altitude) {
+        localContextSection += `🏔️ ALTITUDE: ${Math.round(local_context.altitude)}m\n`;
+        if (local_context.altitude > 1000) {
+          localContextSection += `   (Zone de haute altitude - cultures adaptées: café arabica, maraîchage)\n`;
+        } else if (local_context.altitude > 500) {
+          localContextSection += `   (Zone de moyenne altitude - cultures diversifiées)\n`;
+        } else {
+          localContextSection += `   (Zone de basse altitude - cultures tropicales)\n`;
+        }
+      }
+      
+      // Region
+      if (local_context.region_name) {
+        localContextSection += `🗺️ RÉGION: ${local_context.region_name}`;
+        if (local_context.nearest_city) {
+          localContextSection += ` (proche de ${local_context.nearest_city}`;
+          if (local_context.distance_to_city) {
+            localContextSection += `, ~${Math.round(local_context.distance_to_city)}km`;
+          }
+          localContextSection += `)`;
+        }
+        localContextSection += `\n`;
+      }
+      
+      // Climate zone
+      if (local_context.climate_zone) {
+        localContextSection += `🌍 ZONE CLIMATIQUE: ${local_context.climate_zone}\n`;
+        if (local_context.climate_characteristics && local_context.climate_characteristics.length > 0) {
+          localContextSection += `   Caractéristiques: ${local_context.climate_characteristics.join(', ')}\n`;
+        }
+      }
+      
+      // Season
+      if (local_context.season_name) {
+        localContextSection += `📅 SAISON ACTUELLE: ${local_context.season_name}\n`;
+        // Add seasonal advice hints
+        if (local_context.season === 'rainy') {
+          localContextSection += `   (Période propice aux semis, attention aux maladies fongiques)\n`;
+        } else if (local_context.season === 'dry') {
+          localContextSection += `   (Période de récolte pour beaucoup de cultures, irrigation importante)\n`;
+        } else if (local_context.season === 'dry_to_rainy') {
+          localContextSection += `   (Préparer les parcelles, commencer les pépinières)\n`;
+        } else if (local_context.season === 'rainy_to_dry') {
+          localContextSection += `   (Dernières plantations, préparer les récoltes)\n`;
+        }
+      }
+      
+      // Weather
+      if (local_context.weather) {
+        localContextSection += `\n🌤️ MÉTÉO ACTUELLE:\n`;
+        localContextSection += `   Température: ${local_context.weather.temperature}°C\n`;
+        localContextSection += `   Humidité: ${local_context.weather.humidity}%\n`;
+        if (local_context.weather.wind_speed) {
+          localContextSection += `   Vent: ${local_context.weather.wind_speed} km/h\n`;
+        }
+        if (local_context.weather.description) {
+          localContextSection += `   Conditions: ${local_context.weather.description}\n`;
+        }
+        if (local_context.weather.rain_probability !== undefined) {
+          localContextSection += `   Probabilité de pluie: ${local_context.weather.rain_probability}%\n`;
+        }
+        if (local_context.weather.advice) {
+          localContextSection += `   Conseil météo: ${local_context.weather.advice}\n`;
+        }
+      }
+    }
+
+    const region = local_context?.region || "centre";
+    
     const systemPrompt = `Tu es AgroCamer Assistant, un conseiller agricole expert pour les agriculteurs camerounais.
 
-CONTEXTE:
-- Région de l'utilisateur: ${region}
-- Langue: ${language === "fr" ? "Français" : "English"}
+CONTEXTE GÉOGRAPHIQUE ET ENVIRONNEMENTAL:
+${localContextSection || `- Région: ${region}\n- Pas de données de localisation précises disponibles`}
+
+Langue de réponse: ${language === "fr" ? "Français" : "English"}
 
 ${dbContext ? `DONNÉES LOCALES DISPONIBLES (PRIORITAIRES):
 ${dbContext}
@@ -376,26 +459,30 @@ Ces informations sont vérifiées et adaptées au contexte camerounais.
 Ne fais des recherches externes que si les données locales ne couvrent pas la question.` : ""}
 
 TES COMPÉTENCES:
-1. Conseils sur les cultures camerounaises: cacao, café, maïs, manioc, banane plantain, tomate, gombo, arachide, haricot, igname, macabo, patate douce
+1. Conseils sur les cultures camerounaises: cacao, café, maïs, manioc, banane plantain, tomate, gombo, arachide, haricot, igname, macabo, patate douce, ndolé, safou, avocat
 2. Identification et traitement des maladies des plantes
-3. Calendrier agricole adapté aux saisons camerounaises
-4. Prix du marché et conseils de vente
-5. Techniques agricoles durables
-6. Gestion des sols et irrigation
+3. Calendrier agricole adapté aux saisons camerounaises ET à la zone climatique de l'agriculteur
+4. Prix du marché et conseils de vente adaptés à la région
+5. Techniques agricoles durables adaptées à l'altitude et au climat local
+6. Gestion des sols et irrigation selon les conditions météo actuelles
 
-RÈGLES:
+RÈGLES CRITIQUES:
+- ADAPTE tes réponses au contexte local (altitude, climat, saison, météo)
+- Pour les conseils de plantation: considère la saison actuelle et les prévisions météo
+- Pour les maladies: prends en compte l'humidité et les conditions climatiques
+- Pour les prix: utilise les marchés proches de la localisation de l'agriculteur
 - Réponds UNIQUEMENT en ${language === "fr" ? "français" : "anglais"}
 - PRIORISE les données de la base de données locale si elles sont disponibles
 - Utilise un vocabulaire simple accessible à tous les niveaux d'éducation
-- Privilégie les solutions locales et biologiques
+- Privilégie les solutions locales et biologiques disponibles au Cameroun
 - Mentionne les noms locaux des maladies et traitements quand possible
-- Sois concis mais informatif (max 150 mots)
+- Sois concis mais informatif (max 200 mots)
 - Si tu ne sais pas, admets-le et suggère de consulter un technicien agricole local
 
 PERSONNALITÉ:
 - Amical et encourageant
 - Patient et pédagogue
-- Respectueux des pratiques traditionnelles`;
+- Respectueux des pratiques traditionnelles camerounaises`;
 
     let lastError = "";
     let aiResponse = "";
