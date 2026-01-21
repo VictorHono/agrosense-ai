@@ -21,6 +21,7 @@ export interface AnalysisResult {
   maintenance_tips?: string[];
   yield_improvement_tips?: string[];
   from_database?: boolean;
+  from_learning?: boolean;
 }
 
 export interface Crop {
