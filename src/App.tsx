@@ -7,9 +7,9 @@ import { LanguageProvider } from "@/contexts/LanguageContext";
 import { GeolocationProvider } from "@/contexts/GeolocationContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { RequireAuth } from "@/components/auth/RequireAuth";
+import { FloatingChatBubble } from "@/components/chat/FloatingChatBubble";
 import Index from "./pages/Index";
 import DiagnosePage from "./pages/DiagnosePage";
-import AssistantPage from "./pages/AssistantPage";
 import HarvestPage from "./pages/HarvestPage";
 import HistoryPage from "./pages/HistoryPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -79,10 +79,9 @@ const App = () => (
                 {/* Auth Route - Public */}
                 <Route path="/auth" element={<AuthPage />} />
                 
-{/* Protected User Routes */}
+                {/* Protected User Routes */}
                 <Route path="/" element={<RequireAuth><Index /></RequireAuth>} />
                 <Route path="/diagnose" element={<RequireAuth><DiagnosePage /></RequireAuth>} />
-                <Route path="/assistant" element={<RequireAuth><AssistantPage /></RequireAuth>} />
                 <Route path="/harvest" element={<RequireAuth><HarvestPage /></RequireAuth>} />
                 <Route path="/history" element={<RequireAuth><HistoryPage /></RequireAuth>} />
                 <Route path="/settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
@@ -111,6 +110,9 @@ const App = () => (
                 {/* Catch all */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              
+              {/* Floating Chat Bubble - Always visible */}
+              <FloatingChatBubble />
             </BrowserRouter>
           </TooltipProvider>
         </GeolocationProvider>
