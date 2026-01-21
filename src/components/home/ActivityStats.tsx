@@ -33,12 +33,9 @@ export function ActivityStats() {
 
   return (
     <div className="p-4 rounded-2xl bg-card border border-border fade-in" style={{ animationDelay: '600ms' }}>
-      <Link to="/history" className="flex items-center justify-between mb-3 group">
-        <h3 className="text-sm font-semibold text-muted-foreground group-hover:text-foreground transition-colors">
-          {t('home.activity.title') || 'Votre activité récente'}
-        </h3>
-        <span className="text-xs text-primary group-hover:underline">Voir tout →</span>
-      </Link>
+      <h3 className="text-sm font-semibold text-muted-foreground mb-3">
+        {t('home.activity.title') || 'Votre activité récente'}
+      </h3>
       
       {loading ? (
         <div className="flex items-center justify-center py-6">
