@@ -117,6 +117,9 @@ export function useDiagnosis(language: string) {
   // Load persisted state on mount
   const persistedState = loadPersistedState();
   
+  // Track if current result is from restored state (to avoid double-logging)
+  const wasRestoredRef = useRef<boolean>(!!persistedState?.result);
+  
   const [state, setState] = useState<DiagnosisState>(() => ({
     step: persistedState?.step === 'result' ? 'result' : 'capture',
     compressionStep: persistedState?.imageBase64 ? 'ready' : 'idle',
@@ -400,6 +403,9 @@ export function useDiagnosis(language: string) {
       if (data.error) throw new Error(data.error);
 
       if (data.success && data.analysis) {
+        // Mark as fresh result (not restored from persistence)
+        wasRestoredRef.current = false;
+        
         setState(s => ({ 
           ...s, 
           result: data.analysis, 
@@ -499,6 +505,7 @@ export function useDiagnosis(language: string) {
     maxRetries: state.maxRetries,
     isReady: state.compressionStep === 'ready' && !!state.imageBase64,
     isCompressing: state.step === 'compressing' || ['reading', 'resizing', 'compressing'].includes(state.compressionStep),
+    isRestored: wasRestoredRef.current, // Flag to indicate if result was restored from persistence
     
     // Actions
     handleFileSelect,
