@@ -2,3 +2,6 @@ project_id = "vyporuybyatzpmumuwaw"
 
 [functions.analyze-plant]
 verify_jwt = false
+
+[functions.sync-learning-to-database]
+verify_jwt = false

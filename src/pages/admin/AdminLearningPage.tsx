@@ -27,7 +27,10 @@ import {
   Pencil,
   Save,
   Plus,
-  X
+  X,
+  Loader2,
+  Database,
+  ArrowRight
 } from 'lucide-react';
 
 interface LearningEntry {
@@ -277,8 +280,61 @@ export default function AdminLearningPage() {
     setEditForm({ ...editForm, treatments: editForm.treatments.filter((_, i) => i !== index) });
   };
 
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<{
+    success: boolean;
+    message: string;
+    crop?: { id: string; name: string; isNew: boolean };
+    disease?: { id: string; name: string; isNew: boolean };
+    treatments?: Array<{ id: string; name: string; isNew: boolean }>;
+  } | null>(null);
+
+  const syncToDatabase = async (entryId: string): Promise<boolean> => {
+    setSyncing(true);
+    setSyncResult(null);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('sync-learning-to-database', {
+        body: { entryId, action: 'sync' }
+      });
+
+      if (error) throw error;
+
+      setSyncResult(data);
+      
+      if (data.success) {
+        toast.success('Synchronisation réussie!', {
+          description: data.message?.split('\n')[0] || 'Données synchronisées avec la base de données',
+        });
+        return true;
+      } else {
+        toast.error('Erreur de synchronisation', {
+          description: data.error || 'Une erreur est survenue',
+        });
+        return false;
+      }
+    } catch (err) {
+      console.error('Error syncing to database:', err);
+      toast.error('Erreur de synchronisation');
+      return false;
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const handleVerify = async (entryId: string, verified: boolean) => {
     try {
+      // If verifying (not un-verifying), sync to database first
+      if (verified) {
+        const syncSuccess = await syncToDatabase(entryId);
+        if (!syncSuccess) {
+          // Ask if they want to continue anyway
+          if (!confirm('La synchronisation a échoué. Voulez-vous quand même valider le diagnostic ?')) {
+            return;
+          }
+        }
+      }
+
       const { error } = await supabase
         .from('diagnosis_learning')
         .update({
@@ -290,9 +346,10 @@ export default function AdminLearningPage() {
 
       if (error) throw error;
 
-      toast.success(verified ? 'Diagnostic vérifié' : 'Vérification retirée');
+      toast.success(verified ? 'Diagnostic vérifié et synchronisé!' : 'Vérification retirée');
       setSelectedEntry(null);
       setVerificationNotes('');
+      setSyncResult(null);
       fetchEntries();
     } catch (err) {
       console.error('Error verifying entry:', err);
@@ -972,6 +1029,61 @@ export default function AdminLearningPage() {
                       <p className="text-sm">{selectedEntry.verification_notes}</p>
                     </div>
                   )}
+
+                  {/* Sync Result Display */}
+                  {syncResult && (
+                    <div className={`p-4 rounded-lg border ${syncResult.success ? 'bg-primary/5 border-primary/20' : 'bg-destructive/5 border-destructive/20'}`}>
+                      <h4 className="font-semibold mb-2 flex items-center gap-2">
+                        <Database className="w-4 h-4" />
+                        Résultat de la synchronisation
+                      </h4>
+                      <div className="space-y-2 text-sm">
+                        {syncResult.crop && (
+                          <div className="flex items-center gap-2">
+                            <Leaf className="w-4 h-4 text-green-600" />
+                            <span>
+                              Culture: <strong>{syncResult.crop.name}</strong>
+                              {syncResult.crop.isNew ? (
+                                <Badge className="ml-2 bg-green-500/10 text-green-600 text-[10px]">Nouvelle</Badge>
+                              ) : (
+                                <Badge className="ml-2 bg-blue-500/10 text-blue-600 text-[10px]">Existante</Badge>
+                              )}
+                            </span>
+                          </div>
+                        )}
+                        {syncResult.disease && (
+                          <div className="flex items-center gap-2">
+                            <Bug className="w-4 h-4 text-red-600" />
+                            <span>
+                              Maladie: <strong>{syncResult.disease.name}</strong>
+                              {syncResult.disease.isNew ? (
+                                <Badge className="ml-2 bg-green-500/10 text-green-600 text-[10px]">Nouvelle</Badge>
+                              ) : (
+                                <Badge className="ml-2 bg-blue-500/10 text-blue-600 text-[10px]">Mise à jour</Badge>
+                              )}
+                            </span>
+                          </div>
+                        )}
+                        {syncResult.treatments && syncResult.treatments.length > 0 && (
+                          <div className="space-y-1">
+                            {syncResult.treatments.map((t, i) => (
+                              <div key={i} className="flex items-center gap-2 ml-4">
+                                <span className="text-primary">💊</span>
+                                <span>
+                                  {t.name}
+                                  {t.isNew ? (
+                                    <Badge className="ml-2 bg-green-500/10 text-green-600 text-[10px]">Nouveau</Badge>
+                                  ) : (
+                                    <Badge className="ml-2 bg-blue-500/10 text-blue-600 text-[10px]">Existant</Badge>
+                                  )}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -999,14 +1111,30 @@ export default function AdminLearningPage() {
                       <Button
                         variant="destructive"
                         onClick={() => handleVerify(selectedEntry.id, false)}
+                        disabled={syncing}
                       >
                         <XCircle className="w-4 h-4 mr-1" />
                         Retirer la vérification
                       </Button>
                     ) : (
-                      <Button onClick={() => handleVerify(selectedEntry.id, true)}>
-                        <CheckCircle2 className="w-4 h-4 mr-1" />
-                        Valider ce diagnostic
+                      <Button 
+                        onClick={() => handleVerify(selectedEntry.id, true)}
+                        disabled={syncing}
+                        className="gap-2"
+                      >
+                        {syncing ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Synchronisation...
+                          </>
+                        ) : (
+                          <>
+                            <Database className="w-4 h-4" />
+                            <ArrowRight className="w-3 h-3" />
+                            <CheckCircle2 className="w-4 h-4" />
+                            Valider et Synchroniser
+                          </>
+                        )}
                       </Button>
                     )}
                   </>
