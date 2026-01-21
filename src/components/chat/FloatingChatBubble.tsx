@@ -3,9 +3,19 @@ import { MessageCircle, X, Mic, MicOff, Send, Volume2, VolumeX, Loader2, Minimiz
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { useGeolocationContext } from '@/contexts/GeolocationContext';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+
+// Helper to get current season in Cameroon
+function getCurrentSeason(): { season: string; seasonFr: string } {
+  const month = new Date().getMonth() + 1;
+  if (month >= 3 && month <= 5) return { season: 'dry_to_rainy', seasonFr: 'Transition sèche-pluvieuse' };
+  if (month >= 6 && month <= 10) return { season: 'rainy', seasonFr: 'Saison des pluies' };
+  if (month === 11) return { season: 'rainy_to_dry', seasonFr: 'Transition pluvieuse-sèche' };
+  return { season: 'dry', seasonFr: 'Saison sèche' };
+}
 
 interface ChatMessage {
   id: string;
@@ -17,6 +27,7 @@ interface ChatMessage {
 export function FloatingChatBubble() {
   const { t, language } = useLanguage();
   const { user } = useAuth();
+  const { position, locationInfo, positionSource } = useGeolocationContext();
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
@@ -24,10 +35,36 @@ export function FloatingChatBubble() {
   const [isLoading, setIsLoading] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [weatherData, setWeatherData] = useState<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   // Session ID for chat persistence - tied to user
   const sessionId = user?.id || 'anonymous';
+
+  // Fetch weather data when position changes
+  useEffect(() => {
+    async function fetchWeather() {
+      if (!position) return;
+      
+      try {
+        const { data } = await supabase.functions.invoke('get-weather', {
+          body: {
+            latitude: position.latitude,
+            longitude: position.longitude,
+            altitude: position.altitude,
+            language,
+          },
+        });
+        if (data?.success) {
+          setWeatherData(data.weather);
+        }
+      } catch (error) {
+        console.error('Error fetching weather for chat:', error);
+      }
+    }
+    
+    fetchWeather();
+  }, [position, language]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -117,12 +154,46 @@ export function FloatingChatBubble() {
       
       conversationHistory.push({ role: 'user', content: currentInput });
 
+      // Build comprehensive local context
+      const { season, seasonFr } = getCurrentSeason();
+      const localContext = {
+        // Geolocation data
+        latitude: position?.latitude || null,
+        longitude: position?.longitude || null,
+        altitude: position?.altitude || null,
+        position_source: positionSource,
+        
+        // Location info
+        region: locationInfo?.region || 'centre',
+        region_name: locationInfo?.regionName || null,
+        nearest_city: locationInfo?.nearestCity || null,
+        distance_to_city: locationInfo?.distanceToCity || null,
+        
+        // Climate info
+        climate_zone: locationInfo?.climateZone || null,
+        climate_characteristics: locationInfo?.climateCharacteristics || [],
+        
+        // Season
+        season,
+        season_name: seasonFr,
+        
+        // Weather data
+        weather: weatherData ? {
+          temperature: weatherData.temperature,
+          humidity: weatherData.humidity,
+          wind_speed: weatherData.windSpeed,
+          description: weatherData.description,
+          rain_probability: weatherData.rainProbability,
+          advice: weatherData.advice,
+        } : null,
+      };
+
       const { data, error } = await supabase.functions.invoke('chat-assistant', {
         body: {
           messages: conversationHistory,
           language,
-          region: 'centre',
           session_id: sessionId,
+          local_context: localContext,
         },
       });
 
