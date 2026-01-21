@@ -166,8 +166,8 @@ export default function DiagnosePage() {
         language={language} 
       />
 
-      {/* Back button */}
-      {step !== 'capture' && step !== 'compressing' && (
+      {/* Back button - only show during analyzing, not on result */}
+      {step === 'analyzing' && (
         <Button 
           variant="ghost" 
           size="sm" 
@@ -673,6 +673,7 @@ export default function DiagnosePage() {
             size="lg"
             onClick={reset}
           >
+            <RefreshCw className="w-4 h-4 mr-2" />
             {language === 'fr' ? 'Nouvelle analyse' : 'New analysis'}
           </Button>
         </div>

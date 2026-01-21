@@ -1,5 +1,5 @@
-import { useState, useRef, useCallback } from 'react';
-import { Camera, Upload, Loader2, ChevronLeft, TrendingUp, Star, Package, Sparkles, AlertTriangle, Leaf, Wheat, ShoppingCart, DollarSign, Target } from 'lucide-react';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { Camera, Upload, Loader2, ChevronLeft, TrendingUp, Star, Package, Sparkles, AlertTriangle, Leaf, Wheat, ShoppingCart, DollarSign, Target, RefreshCw } from 'lucide-react';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -10,38 +10,69 @@ type AnalysisStep = 'capture' | 'analyzing' | 'result';
 
 export default function HarvestPage() {
   const { t, language } = useLanguage();
-  const [step, setStep] = useState<AnalysisStep>('capture');
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [imageBase64, setImageBase64] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   
-  const { analyzing, result, analyzeHarvest, reset: resetHook } = useHarvestAnalysis();
+  const { 
+    analyzing, 
+    result, 
+    imageUrl: persistedImageUrl,
+    imageBase64: persistedImageBase64,
+    hasPersistedResult,
+    analyzeHarvest, 
+    reset: resetHook 
+  } = useHarvestAnalysis();
+
+  // Local state for image during capture phase
+  const [localImageUrl, setLocalImageUrl] = useState<string | null>(null);
+  const [localImageBase64, setLocalImageBase64] = useState<string | null>(null);
+  
+  // Determine step based on persisted result
+  const [step, setStep] = useState<AnalysisStep>(() => {
+    if (hasPersistedResult && result) return 'result';
+    return 'capture';
+  });
+
+  // Update step when result changes (after analysis)
+  useEffect(() => {
+    if (result && !analyzing) {
+      setStep('result');
+    }
+  }, [result, analyzing]);
+
+  // Use persisted or local image
+  const imageUrl = persistedImageUrl || localImageUrl;
+  const imageBase64 = persistedImageBase64 || localImageBase64;
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const url = URL.createObjectURL(file);
-      setImageUrl(url);
+      setLocalImageUrl(url);
 
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64 = reader.result as string;
-        setImageBase64(base64);
+        setLocalImageBase64(base64);
       };
       reader.readAsDataURL(file);
     }
   }, []);
 
   const handleAnalyze = async () => {
-    if (!imageBase64) return;
+    const imgBase64 = localImageBase64 || persistedImageBase64;
+    const imgUrl = localImageUrl || persistedImageUrl;
+    if (!imgBase64 || !imgUrl) return;
     
     setStep('analyzing');
     
-    const analysisResult = await analyzeHarvest(imageBase64);
+    const analysisResult = await analyzeHarvest(imgBase64, imgUrl);
     
     if (analysisResult) {
       setStep('result');
+      // Clear local state since it's now persisted in the hook
+      setLocalImageUrl(null);
+      setLocalImageBase64(null);
     } else {
       setStep('capture');
     }
@@ -49,8 +80,8 @@ export default function HarvestPage() {
 
   const resetAnalysis = () => {
     setStep('capture');
-    setImageUrl(null);
-    setImageBase64(null);
+    setLocalImageUrl(null);
+    setLocalImageBase64(null);
     resetHook();
   };
 
@@ -95,7 +126,8 @@ export default function HarvestPage() {
 
   return (
     <PageContainer title={t('harvest.title')}>
-      {step !== 'capture' && (
+      {/* Back button - only show during analyzing, not on result */}
+      {step === 'analyzing' && (
         <Button 
           variant="ghost" 
           size="sm" 
@@ -123,8 +155,8 @@ export default function HarvestPage() {
                   size="sm"
                   className="absolute top-3 right-3"
                   onClick={() => {
-                    setImageUrl(null);
-                    setImageBase64(null);
+                    setLocalImageUrl(null);
+                    setLocalImageBase64(null);
                   }}
                 >
                   {language === 'fr' ? 'Changer' : 'Change'}
@@ -520,6 +552,7 @@ export default function HarvestPage() {
             size="lg"
             onClick={resetAnalysis}
           >
+            <RefreshCw className="w-4 h-4 mr-2" />
             {language === 'fr' ? 'Nouvelle analyse' : 'New analysis'}
           </Button>
         </div>
