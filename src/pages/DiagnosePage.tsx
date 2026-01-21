@@ -15,6 +15,7 @@ import { ActionChecklist } from '@/components/diagnose/ActionChecklist';
 import { ShareDiagnosis } from '@/components/diagnose/ShareDiagnosis';
 import { DiagnosisHistory, saveDiagnosisToHistory } from '@/components/diagnose/DiagnosisHistory';
 import { SimilarCases } from '@/components/diagnose/SimilarCases';
+import { LocalSourceBadge } from '@/components/diagnose/LocalSourceBadge';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useGeolocationContext } from '@/contexts/GeolocationContext';
@@ -494,6 +495,13 @@ export default function DiagnosePage() {
               />
             </div>
           </div>
+
+          {/* Local Source Indicator */}
+          <LocalSourceBadge 
+            fromLearning={result.from_learning === true} 
+            fromDatabase={result.from_database === true && !result.from_learning}
+            language={language}
+          />
 
           {/* Severity Score */}
           <SeverityScore 

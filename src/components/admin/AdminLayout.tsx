@@ -17,6 +17,7 @@ const sidebarItems = [
   { path: '/admin/diseases', icon: Bug, label: 'Maladies & Ravageurs' },
   { path: '/admin/treatments', icon: FlaskConical, label: 'Traitements' },
   { path: '/admin/ai', icon: Brain, label: 'Supervision IA' },
+  { path: '/admin/learning', icon: Database, label: 'Apprentissage IA' },
   { path: '/admin/languages', icon: Globe, label: 'Langues' },
   { path: '/admin/notifications', icon: Bell, label: 'Notifications' },
   { path: '/admin/analytics', icon: BarChart3, label: 'Analyses' },
