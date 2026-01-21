@@ -24,6 +24,7 @@ interface AnalysisResult {
   maintenance_tips?: string[];
   yield_improvement_tips?: string[];
   from_database: boolean;
+  from_learning: boolean;
 }
 
 interface DBCrop {
@@ -51,6 +52,26 @@ interface DBDisease {
     dosage: string;
     application_method: string;
   }>;
+}
+
+interface LearningEntry {
+  id: string;
+  crop_name: string;
+  crop_local_name: string | null;
+  disease_name: string | null;
+  disease_local_name: string | null;
+  is_healthy: boolean;
+  confidence: number;
+  severity: string | null;
+  symptoms: string[];
+  causes: string[];
+  treatments: Array<{ type: string; name: string; description?: string }>;
+  prevention: string[];
+  region: string | null;
+  climate_zone: string | null;
+  altitude: number | null;
+  verified: boolean;
+  use_count: number;
 }
 
 interface AIProvider {
@@ -98,7 +119,267 @@ function getAIProviders(): AIProvider[] {
   return providers;
 }
 
-// Fetch all crops and diseases from database for context
+// ==================== LEARNING SYSTEM ====================
+
+// Search for similar cases in the learning database
+async function searchLearningDatabase(
+  supabase: any,
+  cropName: string,
+  region: string | null,
+  climateZone: string | null,
+  altitude: number | null
+): Promise<LearningEntry[]> {
+  console.log(`🔍 Searching learning database for: crop="${cropName}", region="${region}", climate="${climateZone}"`);
+  
+  let query = supabase
+    .from("diagnosis_learning")
+    .select("*")
+    .order("use_count", { ascending: false })
+    .order("verified", { ascending: false })
+    .limit(10);
+
+  // Search by crop name (flexible matching)
+  if (cropName) {
+    query = query.or(`crop_name.ilike.%${cropName}%,crop_local_name.ilike.%${cropName}%`);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error("Error searching learning database:", error);
+    return [];
+  }
+
+  console.log(`📚 Found ${data?.length || 0} entries in learning database`);
+
+  // Score and filter results based on context similarity
+  const scoredResults = (data || []).map((entry: LearningEntry) => {
+    let score = 0;
+    
+    // Exact crop match
+    if (entry.crop_name?.toLowerCase() === cropName?.toLowerCase()) {
+      score += 50;
+    } else if (entry.crop_name?.toLowerCase().includes(cropName?.toLowerCase()) ||
+               cropName?.toLowerCase().includes(entry.crop_name?.toLowerCase())) {
+      score += 30;
+    }
+
+    // Region match
+    if (region && entry.region?.toLowerCase() === region.toLowerCase()) {
+      score += 20;
+    }
+
+    // Climate zone match
+    if (climateZone && entry.climate_zone?.toLowerCase() === climateZone.toLowerCase()) {
+      score += 15;
+    }
+
+    // Altitude proximity (within 300m)
+    if (altitude !== null && entry.altitude !== null) {
+      const altDiff = Math.abs(altitude - entry.altitude);
+      if (altDiff < 100) score += 15;
+      else if (altDiff < 300) score += 10;
+      else if (altDiff < 500) score += 5;
+    }
+
+    // Verified entries get a boost
+    if (entry.verified) {
+      score += 25;
+    }
+
+    // Popular entries (high use count) get a boost
+    score += Math.min(entry.use_count, 20);
+
+    return { entry, score };
+  });
+
+  // Filter entries with meaningful scores and sort by score
+  const relevantResults = scoredResults
+    .filter((r: { score: number }) => r.score >= 30)
+    .sort((a: { score: number }, b: { score: number }) => b.score - a.score)
+    .slice(0, 5)
+    .map((r: { entry: LearningEntry }) => r.entry);
+
+  console.log(`✅ ${relevantResults.length} relevant learning entries after scoring`);
+  
+  return relevantResults;
+}
+
+// Build context from learning entries for AI
+function buildLearningContext(learningEntries: LearningEntry[]): string {
+  if (learningEntries.length === 0) return "";
+
+  let context = `\n\n--- DONNÉES D'APPRENTISSAGE ADAPTATIVES (DIAGNOSTICS PRÉCÉDENTS) ---\n`;
+  context += `Ces diagnostics ont été effectués dans des conditions similaires:\n\n`;
+
+  learningEntries.forEach((entry, i) => {
+    context += `📋 CAS ${i + 1}${entry.verified ? " ✓ VÉRIFIÉ" : ""}:\n`;
+    context += `  Culture: ${entry.crop_name}${entry.crop_local_name ? ` (${entry.crop_local_name})` : ""}\n`;
+    
+    if (entry.is_healthy) {
+      context += `  État: SAIN\n`;
+    } else {
+      context += `  Maladie: ${entry.disease_name}${entry.disease_local_name ? ` (${entry.disease_local_name})` : ""}\n`;
+      context += `  Gravité: ${entry.severity}\n`;
+      
+      if (Array.isArray(entry.symptoms) && entry.symptoms.length > 0) {
+        context += `  Symptômes: ${entry.symptoms.slice(0, 3).join(", ")}\n`;
+      }
+      
+      if (Array.isArray(entry.treatments) && entry.treatments.length > 0) {
+        const bioTreatments = entry.treatments.filter((t: any) => t.type === "biological" || t.type?.includes("bio"));
+        const chemTreatments = entry.treatments.filter((t: any) => t.type === "chemical" || t.type?.includes("chim"));
+        
+        if (bioTreatments.length > 0) {
+          context += `  Traitements bio: ${bioTreatments.slice(0, 2).map((t: any) => t.name).join(", ")}\n`;
+        }
+        if (chemTreatments.length > 0) {
+          context += `  Traitements chimiques: ${chemTreatments.slice(0, 2).map((t: any) => t.name).join(", ")}\n`;
+        }
+      }
+    }
+    
+    if (entry.region) context += `  Région: ${entry.region}\n`;
+    if (entry.altitude) context += `  Altitude: ${entry.altitude}m\n`;
+    context += `  Utilisé ${entry.use_count} fois\n\n`;
+  });
+
+  context += `INSTRUCTION: Si tu identifies un cas similaire à ceux-ci, PRIORISE ces informations validées localement.\n`;
+
+  return context;
+}
+
+// Save new diagnosis to learning database
+async function saveDiagnosisToLearning(
+  supabase: any,
+  result: AnalysisResult,
+  locationContext: {
+    latitude: number | null;
+    longitude: number | null;
+    altitude: number | null;
+    region: string | null;
+    climateZone: string | null;
+    nearestCity: string | null;
+  },
+  language: string
+): Promise<void> {
+  try {
+    // Don't save if already from database or very low confidence
+    if (result.from_database || result.confidence < 50) {
+      console.log("⏭️ Skipping learning save - from database or low confidence");
+      return;
+    }
+
+    // Build treatments array
+    const treatments: Array<{ type: string; name: string; description?: string }> = [];
+    
+    if (Array.isArray(result.biological_treatments)) {
+      result.biological_treatments.forEach(t => {
+        treatments.push({ type: "biological", name: t });
+      });
+    }
+    
+    if (Array.isArray(result.chemical_treatments)) {
+      result.chemical_treatments.forEach(t => {
+        treatments.push({ type: "chemical", name: t });
+      });
+    }
+
+    // Check if similar entry already exists
+    const existingQuery = supabase
+      .from("diagnosis_learning")
+      .select("id, use_count")
+      .eq("crop_name", result.detected_crop);
+    
+    if (result.disease_name) {
+      existingQuery.eq("disease_name", result.disease_name);
+    } else {
+      existingQuery.eq("is_healthy", true);
+    }
+
+    if (locationContext.region) {
+      existingQuery.eq("region", locationContext.region);
+    }
+
+    const { data: existingData } = await existingQuery.limit(1);
+
+    if (existingData && existingData.length > 0) {
+      // Update existing entry - increment use count
+      const existing = existingData[0];
+      console.log(`📊 Updating existing learning entry ${existing.id}, use_count: ${existing.use_count + 1}`);
+      
+      await supabase
+        .from("diagnosis_learning")
+        .update({ 
+          use_count: existing.use_count + 1,
+          last_matched_at: new Date().toISOString()
+        })
+        .eq("id", existing.id);
+    } else {
+      // Insert new learning entry
+      const learningEntry = {
+        crop_name: result.detected_crop,
+        crop_local_name: result.detected_crop_local || null,
+        disease_name: result.disease_name || null,
+        disease_local_name: result.local_name || null,
+        is_healthy: result.is_healthy,
+        confidence: result.confidence,
+        severity: result.severity || null,
+        symptoms: result.symptoms || [],
+        causes: result.causes || [],
+        treatments: treatments,
+        prevention: result.prevention || [],
+        latitude: locationContext.latitude,
+        longitude: locationContext.longitude,
+        altitude: locationContext.altitude,
+        region: locationContext.region,
+        climate_zone: locationContext.climateZone,
+        nearest_city: locationContext.nearestCity,
+        language: language,
+        source: "user_diagnosis",
+        verified: false,
+        use_count: 1,
+      };
+
+      console.log("💾 Saving new diagnosis to learning database:", {
+        crop: learningEntry.crop_name,
+        disease: learningEntry.disease_name,
+        region: learningEntry.region,
+        altitude: learningEntry.altitude
+      });
+
+      const { error } = await supabase
+        .from("diagnosis_learning")
+        .insert(learningEntry);
+
+      if (error) {
+        console.error("Error saving to learning database:", error);
+      } else {
+        console.log("✅ Successfully saved to learning database");
+      }
+    }
+  } catch (err) {
+    console.error("Exception saving to learning database:", err);
+  }
+}
+
+// Increment use count when learning entry is matched
+async function incrementLearningUseCount(supabase: any, entryId: string): Promise<void> {
+  try {
+    await supabase
+      .from("diagnosis_learning")
+      .update({ 
+        use_count: supabase.sql`use_count + 1`,
+        last_matched_at: new Date().toISOString()
+      })
+      .eq("id", entryId);
+  } catch (err) {
+    console.error("Error incrementing use count:", err);
+  }
+}
+
+// ==================== DATABASE FUNCTIONS ====================
+
 async function fetchDatabaseContext(supabase: any): Promise<{ crops: DBCrop[]; diseases: DBDisease[] }> {
   console.log("Fetching database context for crops and diseases...");
 
@@ -134,7 +415,6 @@ async function fetchDatabaseContext(supabase: any): Promise<{ crops: DBCrop[]; d
   };
 }
 
-// Build comprehensive database context for AI
 function buildDatabaseContext(crops: DBCrop[], diseases: DBDisease[]): string {
   let context = `--- BASE DE DONNÉES AGRICOLE CAMEROUNAISE ---\n\n`;
   
@@ -165,7 +445,6 @@ function buildDatabaseContext(crops: DBCrop[], diseases: DBDisease[]): string {
   return context;
 }
 
-// Find matching disease from database
 function findMatchingDisease(
   diseases: DBDisease[],
   crops: DBCrop[],
@@ -192,6 +471,8 @@ function findMatchingDisease(
 
   return { disease: diseaseMatch || null, crop: cropMatch };
 }
+
+// ==================== AI PROVIDER FUNCTIONS ====================
 
 function buildLovableRequest(systemPrompt: string, userPrompt: string, imageData: string, dbContext: string) {
   return {
@@ -298,7 +579,7 @@ function parseLovableResponse(data: any): AnalysisResult | null {
     return null;
   }
   const result = JSON.parse(toolCall.function.arguments);
-  return { ...result, from_database: false };
+  return { ...result, from_database: false, from_learning: false };
 }
 
 function parseGeminiResponse(data: any): AnalysisResult | null {
@@ -313,7 +594,7 @@ function parseGeminiResponse(data: any): AnalysisResult | null {
   }
 
   const result = JSON.parse(jsonMatch[0]);
-  return { ...result, from_database: false };
+  return { ...result, from_database: false, from_learning: false };
 }
 
 function isRecoverableError(status: number): boolean {
@@ -400,7 +681,6 @@ async function callProvider(
   }
 }
 
-// Enrich AI result with database information if available
 function enrichResultWithDatabase(
   result: AnalysisResult,
   diseases: DBDisease[],
@@ -444,7 +724,6 @@ function enrichResultWithDatabase(
     }
   }
 
-  // For healthy plants, try to add local name
   const matchingCrop = crops.find(c => 
     c.name.toLowerCase().includes(result.detected_crop.toLowerCase()) ||
     result.detected_crop.toLowerCase().includes(c.name.toLowerCase())
@@ -460,7 +739,6 @@ function enrichResultWithDatabase(
   return result;
 }
 
-// Get location context for advice
 function getLocationContext(
   latitude: number | null,
   longitude: number | null,
@@ -488,7 +766,6 @@ function getLocationContext(
     }
   }
 
-  // Determine region from coordinates
   if (latitude > 8) {
     context += `Région climatique: Soudano-sahélienne (saison sèche longue, températures élevées)\n`;
     context += `Sols typiques: Sablonneux à argileux, parfois ferrugineux\n`;
@@ -508,6 +785,8 @@ function getLocationContext(
   return context;
 }
 
+// ==================== MAIN HANDLER ====================
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -524,9 +803,10 @@ serve(async (req) => {
       accuracy = null,
       regionName = null,
       climateZone = null,
+      nearestCity = null,
     } = await req.json();
 
-    console.log("Analyze request - Location:", latitude, longitude, "Alt:", altitude, "Region:", regionName);
+    console.log("🌱 Analyze request - Location:", latitude, longitude, "Alt:", altitude, "Region:", regionName);
 
     if (!image) {
       console.error("No image provided");
@@ -544,6 +824,22 @@ serve(async (req) => {
     // Fetch all database context
     const { crops, diseases } = await fetchDatabaseContext(supabase);
     let dbContext = buildDatabaseContext(crops, diseases);
+    
+    // ==================== LEARNING SYSTEM: SEARCH FIRST ====================
+    const searchCropName = userSpecifiedCrop || "";
+    const learningEntries = await searchLearningDatabase(
+      supabase,
+      searchCropName,
+      regionName,
+      climateZone,
+      altitude
+    );
+    
+    // Add learning context to AI prompt
+    const learningContext = buildLearningContext(learningEntries);
+    if (learningContext) {
+      dbContext += learningContext;
+    }
     
     // Add location context if available
     const locationContext = getLocationContext(latitude, longitude, altitude, language);
@@ -563,9 +859,14 @@ serve(async (req) => {
     console.log(`Available providers: ${providers.map(p => p.name).join(", ")}`);
     console.log("Language:", language);
     console.log("User specified crop:", userSpecifiedCrop || "None (auto-detect)");
+    console.log(`📚 Learning entries found: ${learningEntries.length}`);
 
-    // Enhanced system prompt for better plant detection
     const systemPrompt = `Tu es un expert agronome botaniste de NIVEAU MONDIAL spécialisé dans l'identification précise des plantes et cultures africaines, particulièrement au Cameroun.
+
+SYSTÈME D'APPRENTISSAGE ADAPTATIF:
+Tu as accès à une base de données d'apprentissage contenant des diagnostics précédents effectués dans des conditions similaires.
+Ces diagnostics ont été validés par la communauté d'agriculteurs et certains par des experts.
+PRIORISE ces données d'apprentissage si elles correspondent au cas actuel.
 
 COMPÉTENCES ESSENTIELLES D'IDENTIFICATION:
 Tu dois EXAMINER ATTENTIVEMENT chaque détail visuel de la plante:
@@ -609,7 +910,7 @@ ENSUITE:
 3. Si SAINE: confirme la bonne santé et donne des conseils d'entretien et d'amélioration du rendement
 
 INSTRUCTIONS IMPORTANTES:
-- PRIORISE les données de la base de données locale si elles sont fournies
+- PRIORISE les données de la base de données locale et les diagnostics d'apprentissage si disponibles
 - Propose UNIQUEMENT des solutions disponibles au Cameroun
 - Inclus des noms locaux quand disponibles
 - Adapte le vocabulaire pour des agriculteurs avec un niveau d'éducation variable
@@ -664,7 +965,36 @@ Réponds en ${language === "fr" ? "français" : "anglais"}.`;
         usedProvider = provider.name;
         
         // Enrich with database info
-        const enrichedResult = enrichResultWithDatabase(result, diseases, crops);
+        let enrichedResult = enrichResultWithDatabase(result, diseases, crops);
+        
+        // Check if result matches a learning entry
+        const matchedLearning = learningEntries.find(entry => 
+          entry.disease_name?.toLowerCase() === result.disease_name?.toLowerCase() ||
+          entry.crop_name?.toLowerCase() === result.detected_crop?.toLowerCase()
+        );
+        
+        if (matchedLearning) {
+          console.log("🎯 Matched learning entry:", matchedLearning.id);
+          enrichedResult.from_learning = true;
+          // Increment use count asynchronously
+          incrementLearningUseCount(supabase, matchedLearning.id);
+        }
+        
+        // ==================== LEARNING SYSTEM: SAVE NEW DIAGNOSIS ====================
+        // Save to learning database (async, non-blocking)
+        saveDiagnosisToLearning(
+          supabase,
+          enrichedResult,
+          {
+            latitude,
+            longitude,
+            altitude,
+            region: regionName,
+            climateZone,
+            nearestCity,
+          },
+          language
+        );
         
         return new Response(
           JSON.stringify({
@@ -672,6 +1002,7 @@ Réponds en ${language === "fr" ? "français" : "anglais"}.`;
             analysis: enrichedResult,
             analyzed_at: new Date().toISOString(),
             provider: usedProvider,
+            learning_entries_used: learningEntries.length,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );

@@ -29,6 +29,7 @@ import AdminMarketPage from "./pages/admin/AdminMarketPage";
 import AdminTipsPage from "./pages/admin/AdminTipsPage";
 import AdminDatabasePage from "./pages/admin/AdminDatabasePage";
 import AdminSettingsPage from "./pages/admin/AdminSettingsPage";
+import AdminLearningPage from "./pages/admin/AdminLearningPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -104,6 +105,7 @@ const App = () => (
                   <Route path="analytics" element={<AdminMarketPage />} />
                   <Route path="content" element={<AdminTipsPage />} />
                   <Route path="database" element={<AdminDatabasePage />} />
+                  <Route path="learning" element={<AdminLearningPage />} />
                   <Route path="settings" element={<AdminSettingsPage />} />
                 </Route>
                 
