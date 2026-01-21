@@ -48,6 +48,59 @@ interface DiagnosisState {
   maxRetries: number;
 }
 
+interface PersistedDiagnosisState {
+  step: AnalysisStep;
+  imageUrl: string | null;
+  imageBase64: string | null;
+  result: AnalysisResult | null;
+  selectedCrop: string;
+  timestamp: number;
+}
+
+const STORAGE_KEY = 'diagnosis_state';
+const MAX_STATE_AGE = 30 * 60 * 1000; // 30 minutes
+
+// Load persisted state from localStorage
+function loadPersistedState(): Partial<PersistedDiagnosisState> | null {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return null;
+    
+    const parsed = JSON.parse(saved) as PersistedDiagnosisState;
+    
+    // Check if state is too old
+    if (Date.now() - parsed.timestamp > MAX_STATE_AGE) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+// Save state to localStorage
+function persistState(state: Partial<PersistedDiagnosisState>) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      ...state,
+      timestamp: Date.now(),
+    }));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+// Clear persisted state
+function clearPersistedState() {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 // Constants
 const TARGET_MAX_BYTES = 400 * 1024; // 400KB target
 const INITIAL_MAX_DIM = 768;
@@ -61,23 +114,39 @@ const RETRY_BASE_DELAY = 1500;
 export function useDiagnosis(language: string) {
   const { position } = useGeolocationContext();
   
-  const [state, setState] = useState<DiagnosisState>({
-    step: 'capture',
-    compressionStep: 'idle',
-    compressionProgress: 0,
-    imageUrl: null,
-    imageBase64: null,
-    result: null,
+  // Load persisted state on mount
+  const persistedState = loadPersistedState();
+  
+  const [state, setState] = useState<DiagnosisState>(() => ({
+    step: persistedState?.step === 'result' ? 'result' : 'capture',
+    compressionStep: persistedState?.imageBase64 ? 'ready' : 'idle',
+    compressionProgress: persistedState?.imageBase64 ? 100 : 0,
+    imageUrl: persistedState?.imageUrl || null,
+    imageBase64: persistedState?.imageBase64 || null,
+    result: persistedState?.result || null,
     crops: [],
-    selectedCrop: 'auto',
+    selectedCrop: persistedState?.selectedCrop || 'auto',
     loadingCrops: true,
     isOnline: navigator.onLine,
     retryCount: 0,
     maxRetries: MAX_RETRIES,
-  });
+  }));
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const analysisTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Persist state changes
+  useEffect(() => {
+    if (state.step === 'result' || state.imageBase64) {
+      persistState({
+        step: state.step,
+        imageUrl: state.imageUrl,
+        imageBase64: state.imageBase64,
+        result: state.result,
+        selectedCrop: state.selectedCrop,
+      });
+    }
+  }, [state.step, state.imageUrl, state.imageBase64, state.result, state.selectedCrop]);
 
   // Monitor online status
   useEffect(() => {
@@ -377,10 +446,13 @@ export function useDiagnosis(language: string) {
     }
   }, [state, language, location]);
 
-  // Reset everything
+  // Reset everything and clear persistence
   const reset = useCallback(() => {
     abortControllerRef.current?.abort();
     if (analysisTimeoutRef.current) clearTimeout(analysisTimeoutRef.current);
+    
+    // Clear persisted state
+    clearPersistedState();
     
     setState(s => ({
       ...s,

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useGeolocationContext } from '@/contexts/GeolocationContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -47,11 +47,65 @@ export interface HarvestResult {
   from_database?: boolean;
 }
 
+interface PersistedHarvestState {
+  result: HarvestResult | null;
+  imageUrl: string | null;
+  imageBase64: string | null;
+  timestamp: number;
+}
+
+const STORAGE_KEY = 'harvest_analysis_state';
+const MAX_STATE_AGE = 30 * 60 * 1000; // 30 minutes
+
+// Load persisted state from localStorage
+function loadPersistedState(): PersistedHarvestState | null {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return null;
+    
+    const parsed = JSON.parse(saved) as PersistedHarvestState;
+    
+    // Check if state is too old
+    if (Date.now() - parsed.timestamp > MAX_STATE_AGE) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+// Save state to localStorage
+function persistState(state: Omit<PersistedHarvestState, 'timestamp'>) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      ...state,
+      timestamp: Date.now(),
+    }));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+// Clear persisted state
+function clearPersistedState() {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 interface UseHarvestAnalysisReturn {
   analyzing: boolean;
   result: HarvestResult | null;
   error: string | null;
-  analyzeHarvest: (imageBase64: string) => Promise<HarvestResult | null>;
+  imageUrl: string | null;
+  imageBase64: string | null;
+  hasPersistedResult: boolean;
+  analyzeHarvest: (imageBase64: string, imageUrl: string) => Promise<HarvestResult | null>;
   reset: () => void;
 }
 
@@ -144,13 +198,29 @@ async function withRetry<T>(
 }
 
 export function useHarvestAnalysis(): UseHarvestAnalysisReturn {
+  // Load persisted state on mount
+  const persistedState = loadPersistedState();
+  
   const [analyzing, setAnalyzing] = useState(false);
-  const [result, setResult] = useState<HarvestResult | null>(null);
+  const [result, setResult] = useState<HarvestResult | null>(persistedState?.result || null);
   const [error, setError] = useState<string | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(persistedState?.imageUrl || null);
+  const [imageBase64, setImageBase64] = useState<string | null>(persistedState?.imageBase64 || null);
   
   const { position, locationInfo } = useGeolocationContext();
   const { language } = useLanguage();
   const { user } = useAuth();
+
+  // Persist state when result changes
+  useEffect(() => {
+    if (result && imageUrl) {
+      persistState({
+        result,
+        imageUrl,
+        imageBase64,
+      });
+    }
+  }, [result, imageUrl, imageBase64]);
 
   const logActivity = useCallback(async (metadata: Record<string, unknown>) => {
     if (!user) return;
@@ -166,10 +236,12 @@ export function useHarvestAnalysis(): UseHarvestAnalysisReturn {
     }
   }, [user]);
 
-  const analyzeHarvest = useCallback(async (imageBase64: string): Promise<HarvestResult | null> => {
+  const analyzeHarvest = useCallback(async (imgBase64: string, imgUrl: string): Promise<HarvestResult | null> => {
     setAnalyzing(true);
     setError(null);
     setResult(null);
+    setImageUrl(imgUrl);
+    setImageBase64(imgBase64);
     
     try {
       // Check network status
@@ -183,7 +255,7 @@ export function useHarvestAnalysis(): UseHarvestAnalysisReturn {
       
       // Compress image for mobile networks
       console.log('[HarvestAnalysis] Compressing image...');
-      const compressedImage = await compressImageForUpload(imageBase64);
+      const compressedImage = await compressImageForUpload(imgBase64);
       console.log('[HarvestAnalysis] Image compressed successfully');
       
       // Build request with geolocation data
@@ -246,6 +318,8 @@ export function useHarvestAnalysis(): UseHarvestAnalysisReturn {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       console.error('[HarvestAnalysis] Error:', errorMessage);
       setError(errorMessage);
+      setImageUrl(null);
+      setImageBase64(null);
       
       toast.error(
         language === 'fr' 
@@ -260,15 +334,23 @@ export function useHarvestAnalysis(): UseHarvestAnalysisReturn {
   }, [position, locationInfo, language, logActivity]);
 
   const reset = useCallback(() => {
+    // Clear persisted state
+    clearPersistedState();
+    
     setResult(null);
     setError(null);
     setAnalyzing(false);
+    setImageUrl(null);
+    setImageBase64(null);
   }, []);
 
   return {
     analyzing,
     result,
     error,
+    imageUrl,
+    imageBase64,
+    hasPersistedResult: !!persistedState?.result,
     analyzeHarvest,
     reset,
   };
