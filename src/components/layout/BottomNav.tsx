@@ -6,8 +6,8 @@ import { cn } from '@/lib/utils';
 const navItems = [
   { path: '/', icon: Home, labelKey: 'nav.home' },
   { path: '/diagnose', icon: Camera, labelKey: 'nav.diagnose' },
-  { path: '/history', icon: History, labelKey: 'nav.history' },
   { path: '/harvest', icon: BarChart3, labelKey: 'nav.harvest' },
+  { path: '/history', icon: History, labelKey: 'nav.history' },
   { path: '/settings', icon: Settings, labelKey: 'nav.settings' },
 ];
 
