@@ -33,16 +33,35 @@ import NotFound from "./pages/NotFound";
 const queryClient = new QueryClient();
 
 
-// Register Service Worker
+// Register Service Worker (production only)
+// In previews/dev, an old SW can cache stale JS chunks and cause React hook runtime errors.
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
-      .then((registration) => {
-        console.log('AgroCamer SW registered:', registration.scope);
-      })
-      .catch((error) => {
-        console.log('AgroCamer SW registration failed:', error);
-      });
+  window.addEventListener('load', async () => {
+    // Disable SW in dev/preview
+    if (!import.meta.env.PROD) {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+
+        // Clear caches so old bundles can't be served
+        if ('caches' in window) {
+          const names = await caches.keys();
+          await Promise.all(names.map((n) => caches.delete(n)));
+        }
+
+        console.log('AgroCamer SW disabled (non-production)');
+      } catch (e) {
+        console.log('AgroCamer SW disable failed:', e);
+      }
+      return;
+    }
+
+    try {
+      const registration = await navigator.serviceWorker.register('/sw.js');
+      console.log('AgroCamer SW registered:', registration.scope);
+    } catch (error) {
+      console.log('AgroCamer SW registration failed:', error);
+    }
   });
 }
 

@@ -1,4 +1,5 @@
-const CACHE_NAME = 'agrocamer-v1';
+// Bump cache version when SW logic changes
+const CACHE_NAME = 'agrocamer-v2';
 const OFFLINE_URL = '/offline.html';
 
 const PRECACHE_ASSETS = [
@@ -38,6 +39,15 @@ self.addEventListener('fetch', (event) => {
   // Skip non-GET requests
   if (event.request.method !== 'GET') return;
 
+  // Never cache JS/CSS/worker files: stale bundles can break the app (invalid hook calls)
+  const dest = event.request.destination;
+  if (dest === 'script' || dest === 'style' || dest === 'worker') {
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
   // Skip API calls - they should always try network
   if (event.request.url.includes('/api/')) {
     event.respondWith(
@@ -54,25 +64,26 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        // Clone and cache successful responses
+        // Cache only navigations and same-origin static assets we explicitly want (avoid JS/CSS)
         if (response.status === 200) {
-          const responseClone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseClone);
-          });
+          const url = new URL(event.request.url);
+          const isSameOrigin = url.origin === self.location.origin;
+          const isNavigation = event.request.mode === 'navigate';
+          const isSafeAsset = isSameOrigin && (dest === 'document' || dest === 'image' || dest === 'font');
+
+          if (isNavigation || isSafeAsset) {
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseClone);
+            });
+          }
         }
         return response;
       })
       .catch(() => {
-        // Try cache on network failure
         return caches.match(event.request).then((cachedResponse) => {
-          if (cachedResponse) {
-            return cachedResponse;
-          }
-          // Return offline page for navigation requests
-          if (event.request.mode === 'navigate') {
-            return caches.match(OFFLINE_URL);
-          }
+          if (cachedResponse) return cachedResponse;
+          if (event.request.mode === 'navigate') return caches.match(OFFLINE_URL);
           return new Response('Contenu non disponible hors ligne', {
             status: 503,
             statusText: 'Service Unavailable'
