@@ -342,11 +342,34 @@ export function useHarvestAnalysis(): UseHarvestAnalysisReturn {
       setImageUrl(null);
       setImageBase64(null);
       
-      toast.error(
-        language === 'fr' 
-          ? 'Erreur lors de l\'analyse. Veuillez réessayer.' 
-          : 'Analysis error. Please try again.'
-      );
+      // Detect specific error types for better user feedback
+      const isQuotaError = errorMessage.includes('429') || 
+                          errorMessage.includes('quota') || 
+                          errorMessage.includes('rate limit') ||
+                          errorMessage.includes('RESOURCE_EXHAUSTED');
+      const isCreditsError = errorMessage.includes('402') || 
+                            errorMessage.includes('credits') || 
+                            errorMessage.includes('payment');
+      
+      if (isCreditsError) {
+        toast.error(
+          language === 'fr'
+            ? 'Crédits IA épuisés. Veuillez recharger votre compte dans Settings → Workspace → Usage.'
+            : 'AI credits exhausted. Please add credits in Settings → Workspace → Usage.'
+        );
+      } else if (isQuotaError) {
+        toast.error(
+          language === 'fr'
+            ? 'Quota API dépassé. Veuillez réessayer dans quelques minutes.'
+            : 'API quota exceeded. Please try again in a few minutes.'
+        );
+      } else {
+        toast.error(
+          language === 'fr' 
+            ? 'Erreur lors de l\'analyse. Veuillez réessayer.' 
+            : 'Analysis error. Please try again.'
+        );
+      }
       
       return null;
     } finally {

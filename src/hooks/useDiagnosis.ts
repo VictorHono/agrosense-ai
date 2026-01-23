@@ -420,14 +420,43 @@ export function useDiagnosis(language: string) {
       console.error('Analysis error:', error);
       
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      // Detect specific error types
+      const isQuotaError = errorMessage.includes('429') || 
+                          errorMessage.includes('quota') || 
+                          errorMessage.includes('rate limit') ||
+                          errorMessage.includes('RESOURCE_EXHAUSTED');
+      const isCreditsError = errorMessage.includes('402') || 
+                            errorMessage.includes('credits') || 
+                            errorMessage.includes('payment');
       const isNetworkError = errorMessage.includes('fetch') || 
                             errorMessage.includes('network') || 
                             errorMessage.includes('Failed to send');
       const isTemporary = errorMessage.includes('503') || 
-                         errorMessage.includes('429') || 
                          errorMessage.includes('temporarily');
 
-      // Retry logic for transient errors
+      // Show specific error messages based on error type
+      if (isCreditsError) {
+        toast.error(
+          language === 'fr'
+            ? 'Crédits IA épuisés. Veuillez recharger votre compte dans Settings → Workspace → Usage.'
+            : 'AI credits exhausted. Please add credits in Settings → Workspace → Usage.'
+        );
+        setState(s => ({ ...s, step: 'capture', retryCount: 0 }));
+        return false;
+      }
+
+      if (isQuotaError) {
+        toast.error(
+          language === 'fr'
+            ? 'Quota API dépassé. Veuillez réessayer dans quelques minutes.'
+            : 'API quota exceeded. Please try again in a few minutes.'
+        );
+        setState(s => ({ ...s, step: 'capture', retryCount: 0 }));
+        return false;
+      }
+
+      // Retry logic for transient errors only
       if ((isNetworkError || isTemporary) && retryAttempt < MAX_RETRIES) {
         const delay = RETRY_BASE_DELAY * Math.pow(2, retryAttempt);
         console.log(`[diagnose] Retrying in ${delay}ms (attempt ${retryAttempt + 1}/${MAX_RETRIES})`);

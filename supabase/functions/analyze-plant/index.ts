@@ -1128,11 +1128,39 @@ Réponds en ${language === "fr" ? "français" : "anglais"}.`;
       console.log(`${provider.name} failed, trying next provider...`);
     }
 
-    // All providers failed
+    // All providers failed - provide specific error codes
     console.error("All providers failed. Last error:", lastError);
+    
+    // Detect error type for better client-side handling
+    const isCreditsError = lastError?.includes('402') || lastError?.includes('credits') || lastError?.includes('payment');
+    const isQuotaError = lastError?.includes('429') || lastError?.includes('quota') || lastError?.includes('RESOURCE_EXHAUSTED');
+    
+    if (isCreditsError) {
+      return new Response(
+        JSON.stringify({ 
+          error: "Crédits IA épuisés. Veuillez recharger votre compte.",
+          error_type: "credits_exhausted",
+          details: lastError
+        }),
+        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
+    if (isQuotaError) {
+      return new Response(
+        JSON.stringify({ 
+          error: "Quota API dépassé. Veuillez réessayer dans quelques minutes.",
+          error_type: "quota_exceeded",
+          details: lastError
+        }),
+        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
     return new Response(
       JSON.stringify({ 
         error: "Tous les services IA sont temporairement indisponibles. Veuillez réessayer plus tard.",
+        error_type: "service_unavailable",
         details: lastError
       }),
       { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
