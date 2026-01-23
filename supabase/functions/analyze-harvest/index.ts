@@ -157,7 +157,7 @@ function getAIProviders(): ExtendedAIProvider[] {
       providers.push({
         name,
         // OpenAI-compatible Inference Providers endpoint
-        endpoint: "https://router.huggingface.co/v1/completions",
+        endpoint: "https://router.huggingface.co/v1/chat/completions",
         apiKey: key,
         model: HF_FALLBACK_MODEL,
         isLovable: false,
@@ -462,7 +462,10 @@ async function callProvider(
         },
         body: JSON.stringify({
           model: (provider as ExtendedAIProvider).model,
-          prompt: textPrompt,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: textPrompt },
+          ],
           max_tokens: 1024,
           temperature: 0.4,
         }),
@@ -479,7 +482,7 @@ async function callProvider(
       }
 
       const data = await response.json();
-      const text = data.choices?.[0]?.text as string | undefined;
+      const text = data.choices?.[0]?.message?.content as string | undefined;
       if (text) {
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
