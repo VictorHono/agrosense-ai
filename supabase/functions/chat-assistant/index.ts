@@ -63,6 +63,10 @@ function sanitizeApiKey(key: string | null | undefined): string | null {
   return k || null;
 }
 
+// HuggingFace Router (Inference Providers) availability depends on which providers/models are enabled
+// on the token/account. Use a smaller, commonly-supported instruct model for best odds.
+const HF_FALLBACK_MODEL = "mistralai/Mistral-7B-Instruct-v0.3";
+
 function getAIProviders(): ExtendedAIProvider[] {
   const providers: ExtendedAIProvider[] = [];
 
@@ -125,9 +129,9 @@ function getAIProviders(): ExtendedAIProvider[] {
       providers.push({
         name,
         // Use OpenAI-compatible Inference Providers endpoint (more stable than the deprecated /hf-inference task API)
-        endpoint: "https://router.huggingface.co/v1/chat/completions",
+        endpoint: "https://router.huggingface.co/v1/completions",
         apiKey: key,
-        model: "google/gemma-2-27b-it",
+        model: HF_FALLBACK_MODEL,
         isLovable: false,
         type: "huggingface",
       });
@@ -377,7 +381,14 @@ async function callProvider(
       const data = await response.json();
       result = parseLovableResponse(data);
     } else if ((provider as ExtendedAIProvider).type === "huggingface") {
+      // HuggingFace Router: some models are available via completions but not chat.
       const token = sanitizeApiKey(provider.apiKey) ?? provider.apiKey;
+
+      const conversationText = messages
+        .map((m) => `${m.role === "user" ? "Utilisateur" : m.role === "assistant" ? "Assistant" : "Système"}: ${m.content}`)
+        .join("\n");
+
+      const prompt = `${systemPrompt}\n\n${conversationText}\nAssistant:`;
 
       response = await fetch(provider.endpoint, {
         method: "POST",
@@ -387,11 +398,8 @@ async function callProvider(
         },
         body: JSON.stringify({
           model: provider.model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            ...messages,
-          ],
-          max_tokens: 1024,
+          prompt,
+          max_tokens: 512,
           temperature: 0.7,
         }),
       });
@@ -407,7 +415,7 @@ async function callProvider(
       }
 
       const data = await response.json();
-      result = data.choices?.[0]?.message?.content || null;
+      result = data.choices?.[0]?.text || null;
     } else {
       // Gemini API
       response = await fetch(provider.endpoint, {
