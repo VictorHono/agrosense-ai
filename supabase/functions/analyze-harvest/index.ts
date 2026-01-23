@@ -153,7 +153,7 @@ function getAIProviders(): ExtendedAIProvider[] {
     if (key) {
       providers.push({
         name,
-        endpoint: "https://api-inference.huggingface.co/models/google/gemma-2-27b-it",
+        endpoint: "https://router.huggingface.co/hf-inference/models/google/gemma-2-27b-it",
         apiKey: key,
         model: "gemma-2-27b-it",
         isLovable: false,
