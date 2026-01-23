@@ -89,11 +89,24 @@ interface ExtendedAIProvider extends AIProvider {
   type: ProviderType;
 }
 
+function sanitizeApiKey(key: string | null | undefined): string | null {
+  if (!key) return null;
+  // Users sometimes paste secrets with surrounding quotes or trailing spaces/newlines.
+  // Clean them to avoid 400/401 and invalid header ByteString errors.
+  let k = key.trim();
+  if (!k) return null;
+  // Remove a single pair of wrapping quotes
+  if ((k.startsWith('"') && k.endsWith('"')) || (k.startsWith("'") && k.endsWith("'"))) {
+    k = k.slice(1, -1).trim();
+  }
+  return k || null;
+}
+
 function getAIProviders(): ExtendedAIProvider[] {
   const providers: ExtendedAIProvider[] = [];
 
   // 1. Lovable AI Gateway (primary)
-  const lovableKey = Deno.env.get("LOVABLE_API_KEY");
+  const lovableKey = sanitizeApiKey(Deno.env.get("LOVABLE_API_KEY"));
   if (lovableKey) {
     providers.push({
       name: "Lovable AI Gateway",
@@ -107,21 +120,21 @@ function getAIProviders(): ExtendedAIProvider[] {
 
   // 2. Gemini API keys (15 keys for maximum availability)
   const geminiKeys = [
-    { key: Deno.env.get("GEMINI_API_KEY_1"), name: "Gemini API 1" },
-    { key: Deno.env.get("GEMINI_API_KEY_2"), name: "Gemini API 2" },
-    { key: Deno.env.get("GEMINI_API_KEY_3"), name: "Gemini API 3" },
-    { key: Deno.env.get("GEMINI_API_KEY_4"), name: "Gemini API 4" },
-    { key: Deno.env.get("GEMINI_API_KEY_5"), name: "Gemini API 5" },
-    { key: Deno.env.get("GEMINI_API_KEY_6"), name: "Gemini API 6" },
-    { key: Deno.env.get("GEMINI_API_KEY_7"), name: "Gemini API 7" },
-    { key: Deno.env.get("GEMINI_API_KEY_8"), name: "Gemini API 8" },
-    { key: Deno.env.get("GEMINI_API_KEY_9"), name: "Gemini API 9" },
-    { key: Deno.env.get("GEMINI_API_KEY_10"), name: "Gemini API 10" },
-    { key: Deno.env.get("GEMINI_API_KEY_11"), name: "Gemini API 11" },
-    { key: Deno.env.get("GEMINI_API_KEY_12"), name: "Gemini API 12" },
-    { key: Deno.env.get("GEMINI_API_KEY_13"), name: "Gemini API 13" },
-    { key: Deno.env.get("GEMINI_API_KEY_14"), name: "Gemini API 14" },
-    { key: Deno.env.get("GEMINI_API_KEY_15"), name: "Gemini API 15" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_1")), name: "Gemini API 1" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_2")), name: "Gemini API 2" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_3")), name: "Gemini API 3" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_4")), name: "Gemini API 4" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_5")), name: "Gemini API 5" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_6")), name: "Gemini API 6" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_7")), name: "Gemini API 7" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_8")), name: "Gemini API 8" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_9")), name: "Gemini API 9" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_10")), name: "Gemini API 10" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_11")), name: "Gemini API 11" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_12")), name: "Gemini API 12" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_13")), name: "Gemini API 13" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_14")), name: "Gemini API 14" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_15")), name: "Gemini API 15" },
   ];
 
   for (const { key, name } of geminiKeys) {
@@ -139,11 +152,11 @@ function getAIProviders(): ExtendedAIProvider[] {
 
   // 3. Hugging Face Inference API (5 keys for additional fallback)
   const huggingfaceKeys = [
-    { key: Deno.env.get("HUGGINGFACE_API_KEY_1"), name: "HuggingFace API 1" },
-    { key: Deno.env.get("HUGGINGFACE_API_KEY_2"), name: "HuggingFace API 2" },
-    { key: Deno.env.get("HUGGINGFACE_API_KEY_3"), name: "HuggingFace API 3" },
-    { key: Deno.env.get("HUGGINGFACE_API_KEY_4"), name: "HuggingFace API 4" },
-    { key: Deno.env.get("HUGGINGFACE_API_KEY_5"), name: "HuggingFace API 5" },
+    { key: sanitizeApiKey(Deno.env.get("HUGGINGFACE_API_KEY_1")), name: "HuggingFace API 1" },
+    { key: sanitizeApiKey(Deno.env.get("HUGGINGFACE_API_KEY_2")), name: "HuggingFace API 2" },
+    { key: sanitizeApiKey(Deno.env.get("HUGGINGFACE_API_KEY_3")), name: "HuggingFace API 3" },
+    { key: sanitizeApiKey(Deno.env.get("HUGGINGFACE_API_KEY_4")), name: "HuggingFace API 4" },
+    { key: sanitizeApiKey(Deno.env.get("HUGGINGFACE_API_KEY_5")), name: "HuggingFace API 5" },
   ];
 
   for (const { key, name } of huggingfaceKeys) {
@@ -672,10 +685,24 @@ function parseGeminiResponse(data: any): AnalysisResult | null {
 
 function isRecoverableError(status: number): boolean {
   // 400 = invalid API key (skip to next provider)
+  // 401/403 = invalid/unauthorized credentials (skip to next provider)
+  // 404 = wrong endpoint/model (skip to next provider)
   // 402 = payment required
   // 429 = rate limit exceeded  
+  // 410 = deprecated endpoint (skip to next provider)
   // 500/503/529 = server errors
-  return status === 400 || status === 429 || status === 402 || status === 503 || status === 500 || status === 529;
+  return (
+    status === 400 ||
+    status === 401 ||
+    status === 403 ||
+    status === 404 ||
+    status === 410 ||
+    status === 402 ||
+    status === 429 ||
+    status === 500 ||
+    status === 503 ||
+    status === 529
+  );
 }
 
 async function callProvider(
@@ -718,10 +745,12 @@ async function callProvider(
       // Build a text description request instead
       const textPrompt = `${systemPrompt}\n\n${dbContext}\n\n${userPrompt}\n\nNote: Analyse basée sur la description textuelle fournie. Réponds en JSON valide.`;
       
+      const token = sanitizeApiKey(provider.apiKey) ?? provider.apiKey;
+
       response = await fetch(provider.endpoint, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${provider.apiKey}`,
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
