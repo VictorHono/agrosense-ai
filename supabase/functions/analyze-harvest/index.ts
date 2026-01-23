@@ -92,6 +92,9 @@ interface ExtendedAIProvider extends AIProvider {
   type: ProviderType;
 }
 
+// Use a smaller, commonly-supported model on HuggingFace Router.
+const HF_FALLBACK_MODEL = "mistralai/Mistral-7B-Instruct-v0.3";
+
 function getAIProviders(): ExtendedAIProvider[] {
   const providers: ExtendedAIProvider[] = [];
 
@@ -154,9 +157,9 @@ function getAIProviders(): ExtendedAIProvider[] {
       providers.push({
         name,
         // OpenAI-compatible Inference Providers endpoint
-        endpoint: "https://router.huggingface.co/v1/chat/completions",
+        endpoint: "https://router.huggingface.co/v1/completions",
         apiKey: key,
-        model: "google/gemma-2-27b-it",
+        model: HF_FALLBACK_MODEL,
         isLovable: false,
         type: "huggingface",
       });
@@ -459,8 +462,8 @@ async function callProvider(
         },
         body: JSON.stringify({
           model: (provider as ExtendedAIProvider).model,
-          messages: [{ role: "user", content: textPrompt }],
-          max_tokens: 2048,
+          prompt: textPrompt,
+          max_tokens: 1024,
           temperature: 0.4,
         }),
       });
@@ -476,9 +479,9 @@ async function callProvider(
       }
 
       const data = await response.json();
-      const content = data.choices?.[0]?.message?.content as string | undefined;
-      if (content) {
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
+      const text = data.choices?.[0]?.text as string | undefined;
+      if (text) {
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           result = { ...JSON.parse(jsonMatch[0]), from_database: false };
         }

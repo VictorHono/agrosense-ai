@@ -88,7 +88,7 @@ function getAIProviders(): ExtendedAIProvider[] {
     if (key) {
       providers.push({
         name,
-        endpoint: "https://router.huggingface.co/v1/chat/completions",
+        endpoint: "https://router.huggingface.co/v1/completions",
         apiKey: key,
         isLovable: false,
         type: "huggingface",
@@ -173,8 +173,8 @@ Langue: ${language === "fr" ? "français" : "anglais"}`;
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "google/gemma-2-27b-it",
-            messages: [{ role: "user", content: prompt }],
+            model: "mistralai/Mistral-7B-Instruct-v0.3",
+            prompt,
             max_tokens: 2048,
             temperature: 0.7,
           }),
@@ -182,7 +182,7 @@ Langue: ${language === "fr" ? "français" : "anglais"}`;
 
         if (response.ok) {
           const data = await response.json();
-          resultText = data.choices?.[0]?.message?.content || null;
+          resultText = data.choices?.[0]?.text || null;
         }
       } else {
         // Gemini API
