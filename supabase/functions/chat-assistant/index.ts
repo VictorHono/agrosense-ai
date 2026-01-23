@@ -29,13 +29,37 @@ interface ExtendedAIProvider extends AIProvider {
 
 function sanitizeApiKey(key: string | null | undefined): string | null {
   if (!key) return null;
-  // Users sometimes paste secrets with surrounding quotes or trailing spaces/newlines.
-  // Clean them to avoid invalid header ByteString and auth failures.
+  // Users sometimes paste secrets with prefixes ("Bearer ...", "Authorization: Bearer ...", URLs containing key=...)
+  // or with hidden unicode/line breaks. Clean aggressively to avoid 401 and invalid header ByteString errors.
   let k = key.trim();
   if (!k) return null;
+
+  // Remove a single pair of wrapping quotes
   if ((k.startsWith('"') && k.endsWith('"')) || (k.startsWith("'") && k.endsWith("'"))) {
     k = k.slice(1, -1).trim();
   }
+
+  // If a full URL or querystring was pasted, extract key=...
+  const keyParam = k.match(/(?:\?|&)key=([^&\s]+)/i);
+  if (keyParam?.[1]) k = keyParam[1];
+
+  // Strip common auth prefixes
+  k = k.replace(/^authorization:\s*/i, "");
+  k = k.replace(/^bearer\s+/i, "");
+  k = k.replace(/^token\s+/i, "");
+
+  // Remove whitespace/newlines anywhere
+  k = k.replace(/\s+/g, "");
+
+  // Normalize and remove non-ASCII/control chars (tokens should be ASCII)
+  try {
+    k = k.normalize("NFKC");
+  } catch {
+    // ignore
+  }
+  k = k.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+  k = Array.from(k).filter((ch) => ch.charCodeAt(0) <= 0x7e).join("");
+
   return k || null;
 }
 
@@ -100,9 +124,10 @@ function getAIProviders(): ExtendedAIProvider[] {
     if (key) {
       providers.push({
         name,
-        endpoint: "https://router.huggingface.co/hf-inference/models/google/gemma-2-27b-it",
+        // Use OpenAI-compatible Inference Providers endpoint (more stable than the deprecated /hf-inference task API)
+        endpoint: "https://router.huggingface.co/v1/chat/completions",
         apiKey: key,
-        model: "gemma-2-27b-it",
+        model: "google/gemma-2-27b-it",
         isLovable: false,
         type: "huggingface",
       });
@@ -352,13 +377,6 @@ async function callProvider(
       const data = await response.json();
       result = parseLovableResponse(data);
     } else if ((provider as ExtendedAIProvider).type === "huggingface") {
-      // HuggingFace Inference API
-      const conversationText = messages
-        .map(m => `${m.role === "user" ? "Utilisateur" : "Assistant"}: ${m.content}`)
-        .join("\n\n");
-      
-      const textPrompt = `${systemPrompt}\n\nConversation:\n${conversationText}\n\nAssistant:`;
-      
       const token = sanitizeApiKey(provider.apiKey) ?? provider.apiKey;
 
       response = await fetch(provider.endpoint, {
@@ -368,12 +386,13 @@ async function callProvider(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          inputs: textPrompt,
-          parameters: {
-            max_new_tokens: 1024,
-            temperature: 0.7,
-            return_full_text: false,
-          },
+          model: provider.model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...messages,
+          ],
+          max_tokens: 1024,
+          temperature: 0.7,
         }),
       });
 
@@ -388,8 +407,7 @@ async function callProvider(
       }
 
       const data = await response.json();
-      const generatedText = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
-      result = generatedText || null;
+      result = data.choices?.[0]?.message?.content || null;
     } else {
       // Gemini API
       response = await fetch(provider.endpoint, {

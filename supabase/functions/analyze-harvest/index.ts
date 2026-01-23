@@ -153,9 +153,10 @@ function getAIProviders(): ExtendedAIProvider[] {
     if (key) {
       providers.push({
         name,
-        endpoint: "https://router.huggingface.co/hf-inference/models/google/gemma-2-27b-it",
+        // OpenAI-compatible Inference Providers endpoint
+        endpoint: "https://router.huggingface.co/v1/chat/completions",
         apiKey: key,
-        model: "gemma-2-27b-it",
+        model: "google/gemma-2-27b-it",
         isLovable: false,
         type: "huggingface",
       });
@@ -448,7 +449,6 @@ async function callProvider(
       const data = await response.json();
       result = parseLovableResponse(data);
     } else if ((provider as ExtendedAIProvider).type === "huggingface") {
-      // HuggingFace Inference API - text-only model
       const textPrompt = `${systemPrompt}\n\n${dbContext}\n\n${userPrompt}\n\nNote: Analyse basée sur la description textuelle. Réponds en JSON valide.`;
       
       response = await fetch(provider.endpoint, {
@@ -458,12 +458,10 @@ async function callProvider(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          inputs: textPrompt,
-          parameters: {
-            max_new_tokens: 2048,
-            temperature: 0.4,
-            return_full_text: false,
-          },
+          model: (provider as ExtendedAIProvider).model,
+          messages: [{ role: "user", content: textPrompt }],
+          max_tokens: 2048,
+          temperature: 0.4,
         }),
       });
 
@@ -478,9 +476,9 @@ async function callProvider(
       }
 
       const data = await response.json();
-      const generatedText = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
-      if (generatedText) {
-        const jsonMatch = generatedText.match(/\{[\s\S]*\}/);
+      const content = data.choices?.[0]?.message?.content as string | undefined;
+      if (content) {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           result = { ...JSON.parse(jsonMatch[0]), from_database: false };
         }

@@ -88,7 +88,7 @@ function getAIProviders(): ExtendedAIProvider[] {
     if (key) {
       providers.push({
         name,
-        endpoint: "https://router.huggingface.co/hf-inference/models/google/gemma-2-27b-it",
+        endpoint: "https://router.huggingface.co/v1/chat/completions",
         apiKey: key,
         isLovable: false,
         type: "huggingface",
@@ -165,7 +165,7 @@ Langue: ${language === "fr" ? "français" : "anglais"}`;
           resultText = data.choices?.[0]?.message?.content;
         }
       } else if ((provider as ExtendedAIProvider).type === "huggingface") {
-        // HuggingFace Inference API
+        // HuggingFace Inference Providers (OpenAI-compatible)
         response = await fetch(provider.endpoint, {
           method: "POST",
           headers: {
@@ -173,19 +173,16 @@ Langue: ${language === "fr" ? "français" : "anglais"}`;
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            inputs: prompt,
-            parameters: {
-              max_new_tokens: 2048,
-              temperature: 0.7,
-              return_full_text: false,
-            },
+            model: "google/gemma-2-27b-it",
+            messages: [{ role: "user", content: prompt }],
+            max_tokens: 2048,
+            temperature: 0.7,
           }),
         });
 
         if (response.ok) {
           const data = await response.json();
-          const generatedText = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
-          resultText = generatedText || null;
+          resultText = data.choices?.[0]?.message?.content || null;
         }
       } else {
         // Gemini API

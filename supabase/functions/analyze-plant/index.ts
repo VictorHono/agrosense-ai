@@ -91,14 +91,37 @@ interface ExtendedAIProvider extends AIProvider {
 
 function sanitizeApiKey(key: string | null | undefined): string | null {
   if (!key) return null;
-  // Users sometimes paste secrets with surrounding quotes or trailing spaces/newlines.
-  // Clean them to avoid 400/401 and invalid header ByteString errors.
+  // Users sometimes paste secrets with prefixes ("Bearer ...", "Authorization: Bearer ...", URLs containing key=...)
+  // or with hidden unicode/line breaks. Clean aggressively to avoid 400/401 and invalid header ByteString errors.
   let k = key.trim();
   if (!k) return null;
+
   // Remove a single pair of wrapping quotes
   if ((k.startsWith('"') && k.endsWith('"')) || (k.startsWith("'") && k.endsWith("'"))) {
     k = k.slice(1, -1).trim();
   }
+
+  // If a full URL or querystring was pasted, extract key=...
+  const keyParam = k.match(/(?:\?|&)key=([^&\s]+)/i);
+  if (keyParam?.[1]) k = keyParam[1];
+
+  // Strip common auth prefixes
+  k = k.replace(/^authorization:\s*/i, "");
+  k = k.replace(/^bearer\s+/i, "");
+  k = k.replace(/^token\s+/i, "");
+
+  // Remove whitespace/newlines anywhere
+  k = k.replace(/\s+/g, "");
+
+  // Normalize and remove non-ASCII/control chars (tokens should be ASCII)
+  try {
+    k = k.normalize("NFKC");
+  } catch {
+    // ignore
+  }
+  k = k.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+  k = Array.from(k).filter((ch) => ch.charCodeAt(0) <= 0x7e).join("");
+
   return k || null;
 }
 
@@ -163,9 +186,10 @@ function getAIProviders(): ExtendedAIProvider[] {
     if (key) {
       providers.push({
         name,
-        endpoint: "https://router.huggingface.co/hf-inference/models/google/gemma-2-27b-it",
+        // OpenAI-compatible Inference Providers endpoint
+        endpoint: "https://router.huggingface.co/v1/chat/completions",
         apiKey: key,
-        model: "gemma-2-27b-it",
+        model: "google/gemma-2-27b-it",
         isLovable: false,
         type: "huggingface",
       });
@@ -741,8 +765,7 @@ async function callProvider(
       const data = await response.json();
       result = parseLovableResponse(data);
     } else if ((provider as ExtendedAIProvider).type === "huggingface") {
-      // HuggingFace Inference API - text-only model (no image support for gemma)
-      // Build a text description request instead
+      // HuggingFace Inference Providers (OpenAI-compatible) - text-only fallback
       const textPrompt = `${systemPrompt}\n\n${dbContext}\n\n${userPrompt}\n\nNote: Analyse basée sur la description textuelle fournie. Réponds en JSON valide.`;
       
       const token = sanitizeApiKey(provider.apiKey) ?? provider.apiKey;
@@ -754,12 +777,10 @@ async function callProvider(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          inputs: textPrompt,
-          parameters: {
-            max_new_tokens: 2048,
-            temperature: 0.4,
-            return_full_text: false,
-          },
+          model: provider.model,
+          messages: [{ role: "user", content: textPrompt }],
+          max_tokens: 2048,
+          temperature: 0.4,
         }),
       });
 
@@ -774,10 +795,9 @@ async function callProvider(
       }
 
       const data = await response.json();
-      // HuggingFace returns array of generated texts
-      const generatedText = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
-      if (generatedText) {
-        const jsonMatch = generatedText.match(/\{[\s\S]*\}/);
+      const content = data.choices?.[0]?.message?.content as string | undefined;
+      if (content) {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           result = { ...JSON.parse(jsonMatch[0]), from_database: false, from_learning: false };
         }
