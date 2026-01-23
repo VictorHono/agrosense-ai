@@ -405,7 +405,11 @@ function parseGeminiResponse(data: any): HarvestResult | null {
 }
 
 function isRecoverableError(status: number): boolean {
-  return status === 429 || status === 402 || status === 503 || status === 500 || status === 529;
+  // 400 = invalid API key (skip to next provider)
+  // 402 = payment required
+  // 429 = rate limit exceeded  
+  // 500/503/529 = server errors
+  return status === 400 || status === 429 || status === 402 || status === 503 || status === 500 || status === 529;
 }
 
 async function callProvider(
