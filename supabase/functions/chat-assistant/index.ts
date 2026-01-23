@@ -128,8 +128,8 @@ function getAIProviders(): ExtendedAIProvider[] {
     if (key) {
       providers.push({
         name,
-        // Use OpenAI-compatible Inference Providers endpoint (more stable than the deprecated /hf-inference task API)
-        endpoint: "https://router.huggingface.co/v1/completions",
+        // OpenAI-compatible HuggingFace Router endpoint
+        endpoint: "https://router.huggingface.co/v1/chat/completions",
         apiKey: key,
         model: HF_FALLBACK_MODEL,
         isLovable: false,
@@ -381,15 +381,8 @@ async function callProvider(
       const data = await response.json();
       result = parseLovableResponse(data);
     } else if ((provider as ExtendedAIProvider).type === "huggingface") {
-      // HuggingFace Router: some models are available via completions but not chat.
+      // HuggingFace Router (OpenAI-compatible): use chat/completions
       const token = sanitizeApiKey(provider.apiKey) ?? provider.apiKey;
-
-      const conversationText = messages
-        .map((m) => `${m.role === "user" ? "Utilisateur" : m.role === "assistant" ? "Assistant" : "Système"}: ${m.content}`)
-        .join("\n");
-
-      const prompt = `${systemPrompt}\n\n${conversationText}\nAssistant:`;
-
       response = await fetch(provider.endpoint, {
         method: "POST",
         headers: {
@@ -398,8 +391,8 @@ async function callProvider(
         },
         body: JSON.stringify({
           model: provider.model,
-          prompt,
-          max_tokens: 512,
+          messages: [{ role: "system", content: systemPrompt }, ...messages],
+          max_tokens: 1024,
           temperature: 0.7,
         }),
       });
@@ -415,7 +408,7 @@ async function callProvider(
       }
 
       const data = await response.json();
-      result = data.choices?.[0]?.text || null;
+      result = data.choices?.[0]?.message?.content || null;
     } else {
       // Gemini API
       response = await fetch(provider.endpoint, {
@@ -660,12 +653,20 @@ PERSONNALITÉ:
       }
     }
 
+    // IMPORTANT: return 200 with a safe fallback message so the client doesn't crash on non-2xx.
+    const fallbackMessage = language === "fr"
+      ? "Désolé, le service IA est temporairement indisponible. Réessaie dans 1–2 minutes.\n\nSi tu peux, précise: culture, symptômes, région et une photo (page Diagnostic/Récolte)."
+      : "Sorry, the AI service is temporarily unavailable. Please try again in 1–2 minutes.\n\nIf you can, include: crop, symptoms, region and a photo (Diagnose/Harvest pages).";
+
     return new Response(
-      JSON.stringify({ 
-        error: "Service temporairement indisponible. Veuillez réessayer.",
-        details: lastError
+      JSON.stringify({
+        success: true,
+        message: fallbackMessage,
+        temporarily_unavailable: true,
+        details: lastError,
+        timestamp: new Date().toISOString(),
       }),
-      { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
     console.error("Error in chat-assistant function:", error);
