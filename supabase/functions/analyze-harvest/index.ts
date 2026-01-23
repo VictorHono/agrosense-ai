@@ -679,6 +679,36 @@ Respond entirely in ${languageName}.`;
       }
     }
 
+    // Detect error type for better client-side handling
+    const isCreditsError = lastError?.includes('402') || lastError?.includes('credits') || lastError?.includes('payment');
+    const isQuotaError = lastError?.includes('429') || lastError?.includes('quota') || lastError?.includes('RESOURCE_EXHAUSTED');
+    
+    if (isCreditsError) {
+      return new Response(
+        JSON.stringify({ 
+          error: language === "fr" 
+            ? "Crédits IA épuisés. Veuillez recharger votre compte."
+            : "AI credits exhausted. Please add credits.",
+          error_type: "credits_exhausted",
+          details: lastError
+        }),
+        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
+    if (isQuotaError) {
+      return new Response(
+        JSON.stringify({ 
+          error: language === "fr" 
+            ? "Quota API dépassé. Veuillez réessayer dans quelques minutes."
+            : "API quota exceeded. Please try again in a few minutes.",
+          error_type: "quota_exceeded",
+          details: lastError
+        }),
+        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const errorMsg = language === "fr" 
       ? "Tous les services IA sont temporairement indisponibles. Veuillez réessayer plus tard."
       : "All AI services are temporarily unavailable. Please try again later.";
@@ -686,6 +716,7 @@ Respond entirely in ${languageName}.`;
     return new Response(
       JSON.stringify({ 
         error: errorMsg,
+        error_type: "service_unavailable",
         details: lastError
       }),
       { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
