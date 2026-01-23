@@ -82,9 +82,17 @@ interface AIProvider {
   isLovable: boolean;
 }
 
-function getAIProviders(): AIProvider[] {
-  const providers: AIProvider[] = [];
+// Provider types for extended fallback system
+type ProviderType = "lovable" | "gemini" | "huggingface";
 
+interface ExtendedAIProvider extends AIProvider {
+  type: ProviderType;
+}
+
+function getAIProviders(): ExtendedAIProvider[] {
+  const providers: ExtendedAIProvider[] = [];
+
+  // 1. Lovable AI Gateway (primary)
   const lovableKey = Deno.env.get("LOVABLE_API_KEY");
   if (lovableKey) {
     providers.push({
@@ -93,15 +101,27 @@ function getAIProviders(): AIProvider[] {
       apiKey: lovableKey,
       model: "google/gemini-2.5-pro",
       isLovable: true,
+      type: "lovable",
     });
   }
 
+  // 2. Gemini API keys (15 keys for maximum availability)
   const geminiKeys = [
     { key: Deno.env.get("GEMINI_API_KEY_1"), name: "Gemini API 1" },
     { key: Deno.env.get("GEMINI_API_KEY_2"), name: "Gemini API 2" },
     { key: Deno.env.get("GEMINI_API_KEY_3"), name: "Gemini API 3" },
     { key: Deno.env.get("GEMINI_API_KEY_4"), name: "Gemini API 4" },
     { key: Deno.env.get("GEMINI_API_KEY_5"), name: "Gemini API 5" },
+    { key: Deno.env.get("GEMINI_API_KEY_6"), name: "Gemini API 6" },
+    { key: Deno.env.get("GEMINI_API_KEY_7"), name: "Gemini API 7" },
+    { key: Deno.env.get("GEMINI_API_KEY_8"), name: "Gemini API 8" },
+    { key: Deno.env.get("GEMINI_API_KEY_9"), name: "Gemini API 9" },
+    { key: Deno.env.get("GEMINI_API_KEY_10"), name: "Gemini API 10" },
+    { key: Deno.env.get("GEMINI_API_KEY_11"), name: "Gemini API 11" },
+    { key: Deno.env.get("GEMINI_API_KEY_12"), name: "Gemini API 12" },
+    { key: Deno.env.get("GEMINI_API_KEY_13"), name: "Gemini API 13" },
+    { key: Deno.env.get("GEMINI_API_KEY_14"), name: "Gemini API 14" },
+    { key: Deno.env.get("GEMINI_API_KEY_15"), name: "Gemini API 15" },
   ];
 
   for (const { key, name } of geminiKeys) {
@@ -112,10 +132,34 @@ function getAIProviders(): AIProvider[] {
         apiKey: key,
         model: "gemini-2.0-flash",
         isLovable: false,
+        type: "gemini",
       });
     }
   }
 
+  // 3. Hugging Face Inference API (5 keys for additional fallback)
+  const huggingfaceKeys = [
+    { key: Deno.env.get("HUGGINGFACE_API_KEY_1"), name: "HuggingFace API 1" },
+    { key: Deno.env.get("HUGGINGFACE_API_KEY_2"), name: "HuggingFace API 2" },
+    { key: Deno.env.get("HUGGINGFACE_API_KEY_3"), name: "HuggingFace API 3" },
+    { key: Deno.env.get("HUGGINGFACE_API_KEY_4"), name: "HuggingFace API 4" },
+    { key: Deno.env.get("HUGGINGFACE_API_KEY_5"), name: "HuggingFace API 5" },
+  ];
+
+  for (const { key, name } of huggingfaceKeys) {
+    if (key) {
+      providers.push({
+        name,
+        endpoint: "https://api-inference.huggingface.co/models/google/gemma-2-27b-it",
+        apiKey: key,
+        model: "gemma-2-27b-it",
+        isLovable: false,
+        type: "huggingface",
+      });
+    }
+  }
+
+  console.log(`🔌 Loaded ${providers.length} AI providers (1 Lovable + ${geminiKeys.filter(k => k.key).length} Gemini + ${huggingfaceKeys.filter(k => k.key).length} HuggingFace)`);
   return providers;
 }
 
@@ -641,7 +685,7 @@ async function callProvider(
 
   try {
     let response: Response;
-    let result: AnalysisResult | null;
+    let result: AnalysisResult | null = null;
 
     if (provider.isLovable) {
       response = await fetch(provider.endpoint, {
@@ -665,7 +709,48 @@ async function callProvider(
 
       const data = await response.json();
       result = parseLovableResponse(data);
+    } else if ((provider as ExtendedAIProvider).type === "huggingface") {
+      // HuggingFace Inference API - text-only model (no image support for gemma)
+      // Build a text description request instead
+      const textPrompt = `${systemPrompt}\n\n${dbContext}\n\n${userPrompt}\n\nNote: Analyse basée sur la description textuelle fournie. Réponds en JSON valide.`;
+      
+      response = await fetch(provider.endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${provider.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          inputs: textPrompt,
+          parameters: {
+            max_new_tokens: 2048,
+            temperature: 0.4,
+            return_full_text: false,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`${provider.name} error:`, response.status, errorText);
+        return {
+          success: false,
+          error: `${provider.name}: ${response.status}`,
+          shouldRetry: isRecoverableError(response.status),
+        };
+      }
+
+      const data = await response.json();
+      // HuggingFace returns array of generated texts
+      const generatedText = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
+      if (generatedText) {
+        const jsonMatch = generatedText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          result = { ...JSON.parse(jsonMatch[0]), from_database: false, from_learning: false };
+        }
+      }
     } else {
+      // Gemini API
       response = await fetch(provider.endpoint, {
         method: "POST",
         headers: {

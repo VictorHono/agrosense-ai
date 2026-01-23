@@ -23,9 +23,17 @@ interface AIProvider {
   isLovable: boolean;
 }
 
-function getAIProviders(): AIProvider[] {
-  const providers: AIProvider[] = [];
+// Provider types for extended fallback system
+type ProviderType = "lovable" | "gemini" | "huggingface";
 
+interface ExtendedAIProvider extends AIProvider {
+  type: ProviderType;
+}
+
+function getAIProviders(): ExtendedAIProvider[] {
+  const providers: ExtendedAIProvider[] = [];
+
+  // 1. Lovable AI Gateway (primary)
   const lovableKey = Deno.env.get("LOVABLE_API_KEY");
   if (lovableKey) {
     providers.push({
@@ -33,12 +41,27 @@ function getAIProviders(): AIProvider[] {
       endpoint: "https://ai.gateway.lovable.dev/v1/chat/completions",
       apiKey: lovableKey,
       isLovable: true,
+      type: "lovable",
     });
   }
 
+  // 2. Gemini API keys (15 keys for maximum availability)
   const geminiKeys = [
     { key: Deno.env.get("GEMINI_API_KEY_1"), name: "Gemini API 1" },
     { key: Deno.env.get("GEMINI_API_KEY_2"), name: "Gemini API 2" },
+    { key: Deno.env.get("GEMINI_API_KEY_3"), name: "Gemini API 3" },
+    { key: Deno.env.get("GEMINI_API_KEY_4"), name: "Gemini API 4" },
+    { key: Deno.env.get("GEMINI_API_KEY_5"), name: "Gemini API 5" },
+    { key: Deno.env.get("GEMINI_API_KEY_6"), name: "Gemini API 6" },
+    { key: Deno.env.get("GEMINI_API_KEY_7"), name: "Gemini API 7" },
+    { key: Deno.env.get("GEMINI_API_KEY_8"), name: "Gemini API 8" },
+    { key: Deno.env.get("GEMINI_API_KEY_9"), name: "Gemini API 9" },
+    { key: Deno.env.get("GEMINI_API_KEY_10"), name: "Gemini API 10" },
+    { key: Deno.env.get("GEMINI_API_KEY_11"), name: "Gemini API 11" },
+    { key: Deno.env.get("GEMINI_API_KEY_12"), name: "Gemini API 12" },
+    { key: Deno.env.get("GEMINI_API_KEY_13"), name: "Gemini API 13" },
+    { key: Deno.env.get("GEMINI_API_KEY_14"), name: "Gemini API 14" },
+    { key: Deno.env.get("GEMINI_API_KEY_15"), name: "Gemini API 15" },
   ];
 
   for (const { key, name } of geminiKeys) {
@@ -48,10 +71,33 @@ function getAIProviders(): AIProvider[] {
         endpoint: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
         apiKey: key,
         isLovable: false,
+        type: "gemini",
       });
     }
   }
 
+  // 3. Hugging Face Inference API (5 keys for additional fallback)
+  const huggingfaceKeys = [
+    { key: Deno.env.get("HUGGINGFACE_API_KEY_1"), name: "HuggingFace API 1" },
+    { key: Deno.env.get("HUGGINGFACE_API_KEY_2"), name: "HuggingFace API 2" },
+    { key: Deno.env.get("HUGGINGFACE_API_KEY_3"), name: "HuggingFace API 3" },
+    { key: Deno.env.get("HUGGINGFACE_API_KEY_4"), name: "HuggingFace API 4" },
+    { key: Deno.env.get("HUGGINGFACE_API_KEY_5"), name: "HuggingFace API 5" },
+  ];
+
+  for (const { key, name } of huggingfaceKeys) {
+    if (key) {
+      providers.push({
+        name,
+        endpoint: "https://api-inference.huggingface.co/models/google/gemma-2-27b-it",
+        apiKey: key,
+        isLovable: false,
+        type: "huggingface",
+      });
+    }
+  }
+
+  console.log(`🔌 Loaded ${providers.length} AI providers`);
   return providers;
 }
 
@@ -115,7 +161,31 @@ Langue: ${language === "fr" ? "français" : "anglais"}`;
           const data = await response.json();
           resultText = data.choices?.[0]?.message?.content;
         }
+      } else if ((provider as ExtendedAIProvider).type === "huggingface") {
+        // HuggingFace Inference API
+        response = await fetch(provider.endpoint, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${provider.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            inputs: prompt,
+            parameters: {
+              max_new_tokens: 512,
+              temperature: 0.8,
+              return_full_text: false,
+            },
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const generatedText = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
+          resultText = generatedText || null;
+        }
       } else {
+        // Gemini API
         response = await fetch(provider.endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
