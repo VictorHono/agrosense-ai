@@ -63,9 +63,9 @@ function sanitizeApiKey(key: string | null | undefined): string | null {
   return k || null;
 }
 
-// HuggingFace Router (Inference Providers) availability depends on which providers/models are enabled
-// on the token/account. Use a smaller, commonly-supported instruct model for best odds.
-const HF_FALLBACK_MODEL = "mistralai/Mistral-7B-Instruct-v0.3";
+// HuggingFace Router (Inference Providers) - use a chat-compatible model
+// meta-llama/Llama-3.1-8B-Instruct is a chat model supported by HuggingFace Inference Providers
+const HF_FALLBACK_MODEL = "meta-llama/Llama-3.1-8B-Instruct";
 
 function getAIProviders(): ExtendedAIProvider[] {
   const providers: ExtendedAIProvider[] = [];

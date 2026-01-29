@@ -92,8 +92,8 @@ interface ExtendedAIProvider extends AIProvider {
   type: ProviderType;
 }
 
-// Use a smaller, commonly-supported model on HuggingFace Router.
-const HF_FALLBACK_MODEL = "mistralai/Mistral-7B-Instruct-v0.3";
+// HuggingFace Router - use a chat-compatible model (Mistral-7B-Instruct is NOT a chat model on HF Router)
+const HF_FALLBACK_MODEL = "meta-llama/Llama-3.1-8B-Instruct";
 
 function getAIProviders(): ExtendedAIProvider[] {
   const providers: ExtendedAIProvider[] = [];

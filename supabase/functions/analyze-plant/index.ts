@@ -125,8 +125,8 @@ function sanitizeApiKey(key: string | null | undefined): string | null {
   return k || null;
 }
 
-// Use a smaller, commonly-supported model on HuggingFace Router.
-const HF_FALLBACK_MODEL = "mistralai/Mistral-7B-Instruct-v0.3";
+// HuggingFace Router - use a chat-compatible model (Mistral-7B-Instruct is NOT a chat model on HF Router)
+const HF_FALLBACK_MODEL = "meta-llama/Llama-3.1-8B-Instruct";
 
 function getAIProviders(): ExtendedAIProvider[] {
   const providers: ExtendedAIProvider[] = [];
@@ -189,8 +189,8 @@ function getAIProviders(): ExtendedAIProvider[] {
     if (key) {
       providers.push({
         name,
-        // OpenAI-compatible Inference Providers endpoint
-        endpoint: "https://router.huggingface.co/v1/completions",
+        // OpenAI-compatible chat endpoint
+        endpoint: "https://router.huggingface.co/v1/chat/completions",
         apiKey: key,
         model: HF_FALLBACK_MODEL,
         isLovable: false,
@@ -781,7 +781,10 @@ async function callProvider(
         },
         body: JSON.stringify({
           model: provider.model,
-          prompt: textPrompt,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: textPrompt },
+          ],
           max_tokens: 1024,
           temperature: 0.4,
         }),
@@ -798,7 +801,7 @@ async function callProvider(
       }
 
       const data = await response.json();
-      const text = data.choices?.[0]?.text as string | undefined;
+      const text = data.choices?.[0]?.message?.content as string | undefined;
       if (text) {
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
