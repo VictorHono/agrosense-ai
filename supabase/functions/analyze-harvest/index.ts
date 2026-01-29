@@ -61,6 +61,31 @@ interface AIProvider {
   isLovable: boolean;
 }
 
+// Sanitize API keys to remove invisible characters and common errors
+function sanitizeApiKey(key: string | null | undefined): string | null {
+  if (!key) return null;
+  let k = key.trim();
+  if (!k) return null;
+  if ((k.startsWith('"') && k.endsWith('"')) || (k.startsWith("'") && k.endsWith("'"))) {
+    k = k.slice(1, -1).trim();
+  }
+  const keyParam = k.match(/(?:\?|&)key=([^&\s]+)/i);
+  if (keyParam?.[1]) k = keyParam[1];
+  k = k.replace(/^authorization:\s*/i, "");
+  k = k.replace(/^bearer\s+/i, "");
+  k = k.replace(/^token\s+/i, "");
+  k = k.replace(/\s+/g, "");
+  try { k = k.normalize("NFKC"); } catch { /* ignore */ }
+  k = k.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+  k = Array.from(k).filter((ch) => ch.charCodeAt(0) <= 0x7e).join("");
+  return k || null;
+}
+
+// Check if an error is recoverable (should try next provider)
+function isRecoverableError(status: number): boolean {
+  return [400, 401, 402, 403, 404, 410, 429, 500, 502, 503, 504].includes(status);
+}
+
 // Language configuration for multilingual AI responses
 const languageConfig: { [key: string]: { name: string; instruction: string } } = {
   fr: { name: "French", instruction: "Réponds entièrement en français." },
@@ -99,7 +124,7 @@ function getAIProviders(): ExtendedAIProvider[] {
   const providers: ExtendedAIProvider[] = [];
 
   // 1. Lovable AI Gateway (primary)
-  const lovableKey = Deno.env.get("LOVABLE_API_KEY");
+  const lovableKey = sanitizeApiKey(Deno.env.get("LOVABLE_API_KEY"));
   if (lovableKey) {
     providers.push({
       name: "Lovable AI Gateway",
@@ -113,21 +138,21 @@ function getAIProviders(): ExtendedAIProvider[] {
 
   // 2. Gemini API keys (15 keys for maximum availability)
   const geminiKeys = [
-    { key: Deno.env.get("GEMINI_API_KEY_1"), name: "Gemini API 1" },
-    { key: Deno.env.get("GEMINI_API_KEY_2"), name: "Gemini API 2" },
-    { key: Deno.env.get("GEMINI_API_KEY_3"), name: "Gemini API 3" },
-    { key: Deno.env.get("GEMINI_API_KEY_4"), name: "Gemini API 4" },
-    { key: Deno.env.get("GEMINI_API_KEY_5"), name: "Gemini API 5" },
-    { key: Deno.env.get("GEMINI_API_KEY_6"), name: "Gemini API 6" },
-    { key: Deno.env.get("GEMINI_API_KEY_7"), name: "Gemini API 7" },
-    { key: Deno.env.get("GEMINI_API_KEY_8"), name: "Gemini API 8" },
-    { key: Deno.env.get("GEMINI_API_KEY_9"), name: "Gemini API 9" },
-    { key: Deno.env.get("GEMINI_API_KEY_10"), name: "Gemini API 10" },
-    { key: Deno.env.get("GEMINI_API_KEY_11"), name: "Gemini API 11" },
-    { key: Deno.env.get("GEMINI_API_KEY_12"), name: "Gemini API 12" },
-    { key: Deno.env.get("GEMINI_API_KEY_13"), name: "Gemini API 13" },
-    { key: Deno.env.get("GEMINI_API_KEY_14"), name: "Gemini API 14" },
-    { key: Deno.env.get("GEMINI_API_KEY_15"), name: "Gemini API 15" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_1")), name: "Gemini API 1" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_2")), name: "Gemini API 2" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_3")), name: "Gemini API 3" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_4")), name: "Gemini API 4" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_5")), name: "Gemini API 5" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_6")), name: "Gemini API 6" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_7")), name: "Gemini API 7" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_8")), name: "Gemini API 8" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_9")), name: "Gemini API 9" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_10")), name: "Gemini API 10" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_11")), name: "Gemini API 11" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_12")), name: "Gemini API 12" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_13")), name: "Gemini API 13" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_14")), name: "Gemini API 14" },
+    { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_15")), name: "Gemini API 15" },
   ];
 
   for (const { key, name } of geminiKeys) {
@@ -145,18 +170,17 @@ function getAIProviders(): ExtendedAIProvider[] {
 
   // 3. Hugging Face Inference API (5 keys for additional fallback)
   const huggingfaceKeys = [
-    { key: Deno.env.get("HUGGINGFACE_API_KEY_1"), name: "HuggingFace API 1" },
-    { key: Deno.env.get("HUGGINGFACE_API_KEY_2"), name: "HuggingFace API 2" },
-    { key: Deno.env.get("HUGGINGFACE_API_KEY_3"), name: "HuggingFace API 3" },
-    { key: Deno.env.get("HUGGINGFACE_API_KEY_4"), name: "HuggingFace API 4" },
-    { key: Deno.env.get("HUGGINGFACE_API_KEY_5"), name: "HuggingFace API 5" },
+    { key: sanitizeApiKey(Deno.env.get("HUGGINGFACE_API_KEY_1")), name: "HuggingFace API 1" },
+    { key: sanitizeApiKey(Deno.env.get("HUGGINGFACE_API_KEY_2")), name: "HuggingFace API 2" },
+    { key: sanitizeApiKey(Deno.env.get("HUGGINGFACE_API_KEY_3")), name: "HuggingFace API 3" },
+    { key: sanitizeApiKey(Deno.env.get("HUGGINGFACE_API_KEY_4")), name: "HuggingFace API 4" },
+    { key: sanitizeApiKey(Deno.env.get("HUGGINGFACE_API_KEY_5")), name: "HuggingFace API 5" },
   ];
 
   for (const { key, name } of huggingfaceKeys) {
     if (key) {
       providers.push({
         name,
-        // OpenAI-compatible Inference Providers endpoint
         endpoint: "https://router.huggingface.co/v1/chat/completions",
         apiKey: key,
         model: HF_FALLBACK_MODEL,
@@ -408,13 +432,7 @@ function parseGeminiResponse(data: any): HarvestResult | null {
   return { ...result, from_database: false };
 }
 
-function isRecoverableError(status: number): boolean {
-  // 400 = invalid API key (skip to next provider)
-  // 402 = payment required
-  // 429 = rate limit exceeded  
-  // 500/503/529 = server errors
-  return status === 400 || status === 429 || status === 402 || status === 503 || status === 500 || status === 529;
-}
+// isRecoverableError is defined at the top of the file
 
 async function callProvider(
   provider: AIProvider,
