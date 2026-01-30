@@ -61,6 +61,69 @@ export type Database = {
           },
         ]
       }
+      ai_api_keys: {
+        Row: {
+          api_key_encrypted: string
+          created_at: string
+          display_name: string
+          endpoint_url: string | null
+          failed_requests: number
+          id: string
+          is_active: boolean
+          is_vision_capable: boolean
+          last_checked_at: string | null
+          last_status_code: number | null
+          last_status_message: string | null
+          model_name: string | null
+          priority_order: number
+          provider_name: string
+          provider_type: string
+          successful_requests: number
+          total_requests: number
+          updated_at: string
+        }
+        Insert: {
+          api_key_encrypted: string
+          created_at?: string
+          display_name: string
+          endpoint_url?: string | null
+          failed_requests?: number
+          id?: string
+          is_active?: boolean
+          is_vision_capable?: boolean
+          last_checked_at?: string | null
+          last_status_code?: number | null
+          last_status_message?: string | null
+          model_name?: string | null
+          priority_order?: number
+          provider_name: string
+          provider_type: string
+          successful_requests?: number
+          total_requests?: number
+          updated_at?: string
+        }
+        Update: {
+          api_key_encrypted?: string
+          created_at?: string
+          display_name?: string
+          endpoint_url?: string | null
+          failed_requests?: number
+          id?: string
+          is_active?: boolean
+          is_vision_capable?: boolean
+          last_checked_at?: string | null
+          last_status_code?: number | null
+          last_status_message?: string | null
+          model_name?: string | null
+          priority_order?: number
+          provider_name?: string
+          provider_type?: string
+          successful_requests?: number
+          total_requests?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       app_languages: {
         Row: {
           code: string
