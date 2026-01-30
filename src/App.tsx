@@ -30,6 +30,7 @@ import AdminTipsPage from "./pages/admin/AdminTipsPage";
 import AdminDatabasePage from "./pages/admin/AdminDatabasePage";
 import AdminSettingsPage from "./pages/admin/AdminSettingsPage";
 import AdminLearningPage from "./pages/admin/AdminLearningPage";
+import AssistantPage from "./pages/AssistantPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -87,6 +88,7 @@ const App = () => (
                 <Route path="/history" element={<RequireAuth><HistoryPage /></RequireAuth>} />
                 <Route path="/settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
                 <Route path="/tips" element={<RequireAuth><TipsPage /></RequireAuth>} />
+                <Route path="/assistant" element={<RequireAuth><AssistantPage /></RequireAuth>} />
                 
                 {/* Protected Admin Routes */}
                 <Route path="/admin" element={
