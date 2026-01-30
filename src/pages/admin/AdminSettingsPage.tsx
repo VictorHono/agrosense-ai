@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Settings, Bell, Loader2, MapPin, Info } from 'lucide-react';
+import { Settings, Bell, Loader2, MapPin, Info, Brain, ExternalLink, CheckCircle, AlertTriangle, XCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { Link } from 'react-router-dom';
 
 interface AlertStats {
   totalActive: number;
@@ -13,8 +15,16 @@ interface AlertStats {
   bySeverity: { severity: string; count: number }[];
 }
 
+interface AIKeyStats {
+  total: number;
+  active: number;
+  healthy: number;
+  visionCapable: number;
+}
+
 export default function AdminSettingsPage() {
   const [alertStats, setAlertStats] = useState<AlertStats | null>(null);
+  const [aiStats, setAiStats] = useState<AIKeyStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -49,6 +59,20 @@ export default function AdminSettingsPage() {
             bySeverity: Array.from(severityMap.entries())
               .map(([severity, count]) => ({ severity, count }))
               .sort((a, b) => b.count - a.count)
+          });
+        }
+
+        // Fetch AI API keys statistics
+        const { data: aiKeys } = await supabase
+          .from('ai_api_keys')
+          .select('id, is_active, is_vision_capable, last_status_code');
+
+        if (aiKeys) {
+          setAiStats({
+            total: aiKeys.length,
+            active: aiKeys.filter(k => k.is_active).length,
+            healthy: aiKeys.filter(k => k.last_status_code === 200).length,
+            visionCapable: aiKeys.filter(k => k.is_active && k.is_vision_capable).length,
           });
         }
       } catch (error) {
@@ -173,6 +197,78 @@ export default function AdminSettingsPage() {
               </div>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* AI System Management */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Brain className="w-4 h-4 text-primary" />
+            Système IA - Gestion des clés API
+          </CardTitle>
+          <CardDescription>
+            Gestion complète du système de basculement automatique des providers IA
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* AI Stats Summary */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="p-3 rounded-lg bg-muted/50 text-center">
+              <p className="text-2xl font-bold text-foreground">{aiStats?.total || 0}</p>
+              <p className="text-xs text-muted-foreground">Clés totales</p>
+            </div>
+            <div className="p-3 rounded-lg bg-muted/50 text-center">
+              <p className="text-2xl font-bold text-success">{aiStats?.active || 0}</p>
+              <p className="text-xs text-muted-foreground">Actives</p>
+            </div>
+            <div className="p-3 rounded-lg bg-muted/50 text-center">
+              <p className="text-2xl font-bold text-primary">{aiStats?.visionCapable || 0}</p>
+              <p className="text-xs text-muted-foreground">Vision</p>
+            </div>
+            <div className="p-3 rounded-lg bg-muted/50 text-center">
+              <div className="flex items-center justify-center gap-1">
+                {aiStats?.healthy && aiStats.healthy > 0 ? (
+                  <CheckCircle className="w-4 h-4 text-success" />
+                ) : aiStats?.active && aiStats.active > 0 ? (
+                  <AlertTriangle className="w-4 h-4 text-warning" />
+                ) : (
+                  <XCircle className="w-4 h-4 text-destructive" />
+                )}
+                <p className="text-2xl font-bold">{aiStats?.healthy || 0}</p>
+              </div>
+              <p className="text-xs text-muted-foreground">Fonctionnelles</p>
+            </div>
+          </div>
+
+          {/* Status Badge */}
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/30">
+            {aiStats?.healthy && aiStats.healthy > 0 ? (
+              <Badge className="bg-success/10 text-success border-success/20">
+                Système opérationnel
+              </Badge>
+            ) : aiStats?.active && aiStats.active > 0 ? (
+              <Badge className="bg-warning/10 text-warning border-warning/20">
+                Quotas épuisés - Veuillez vérifier les clés
+              </Badge>
+            ) : (
+              <Badge variant="destructive">
+                Système hors service - Aucune clé active
+              </Badge>
+            )}
+            <span className="text-xs text-muted-foreground ml-auto">
+              Basculement automatique entre {aiStats?.total || 0} providers
+            </span>
+          </div>
+
+          {/* Link to full management page */}
+          <Link to="/admin/ai">
+            <Button variant="outline" className="w-full gap-2">
+              <Settings className="w-4 h-4" />
+              Ouvrir la gestion complète des clés API
+              <ExternalLink className="w-4 h-4 ml-auto" />
+            </Button>
+          </Link>
         </CardContent>
       </Card>
 
