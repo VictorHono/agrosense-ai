@@ -120,23 +120,25 @@ interface ExtendedAIProvider extends AIProvider {
 // HuggingFace Router - use a chat-compatible model (Mistral-7B-Instruct is NOT a chat model on HF Router)
 const HF_FALLBACK_MODEL = "meta-llama/Llama-3.1-8B-Instruct";
 
-function getAIProviders(): ExtendedAIProvider[] {
+function getVisionCapableProviders(): ExtendedAIProvider[] {
+  // IMPORTANT: For image analysis, we only use vision-capable providers
+  // HuggingFace models cannot process images, so they are excluded from harvest analysis
   const providers: ExtendedAIProvider[] = [];
 
-  // 1. Lovable AI Gateway (primary)
+  // 1. Lovable AI Gateway (primary - vision capable with Gemini Pro)
   const lovableKey = sanitizeApiKey(Deno.env.get("LOVABLE_API_KEY"));
   if (lovableKey) {
     providers.push({
       name: "Lovable AI Gateway",
       endpoint: "https://ai.gateway.lovable.dev/v1/chat/completions",
       apiKey: lovableKey,
-      model: "google/gemini-2.5-flash",
+      model: "google/gemini-2.5-pro",
       isLovable: true,
       type: "lovable",
     });
   }
 
-  // 2. Gemini API keys (15 keys for maximum availability)
+  // 2. Gemini API keys (15 keys - all are vision capable)
   const geminiKeys = [
     { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_1")), name: "Gemini API 1" },
     { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_2")), name: "Gemini API 2" },
@@ -168,29 +170,17 @@ function getAIProviders(): ExtendedAIProvider[] {
     }
   }
 
-  // 3. Hugging Face Inference API (5 keys for additional fallback)
-  const huggingfaceKeys = [
-    { key: sanitizeApiKey(Deno.env.get("HUGGINGFACE_API_KEY_1")), name: "HuggingFace API 1" },
-    { key: sanitizeApiKey(Deno.env.get("HUGGINGFACE_API_KEY_2")), name: "HuggingFace API 2" },
-    { key: sanitizeApiKey(Deno.env.get("HUGGINGFACE_API_KEY_3")), name: "HuggingFace API 3" },
-    { key: sanitizeApiKey(Deno.env.get("HUGGINGFACE_API_KEY_4")), name: "HuggingFace API 4" },
-    { key: sanitizeApiKey(Deno.env.get("HUGGINGFACE_API_KEY_5")), name: "HuggingFace API 5" },
-  ];
+  // NOTE: HuggingFace providers are NOT included here because they cannot process images
+  // They are text-only models and will return incorrect/generic results for harvest analysis
 
-  for (const { key, name } of huggingfaceKeys) {
-    if (key) {
-      providers.push({
-        name,
-        endpoint: "https://router.huggingface.co/v1/chat/completions",
-        apiKey: key,
-        model: HF_FALLBACK_MODEL,
-        isLovable: false,
-        type: "huggingface",
-      });
-    }
+  const activeCount = providers.length;
+  console.log(`🔌 Loaded ${activeCount} VISION-CAPABLE AI providers (1 Lovable + ${geminiKeys.filter(k => k.key).length} Gemini)`);
+  console.log(`⚠️ HuggingFace providers excluded - they cannot analyze images`);
+  
+  if (activeCount === 0) {
+    console.error("❌ CRITICAL: No vision-capable providers available!");
   }
-
-  console.log(`🔌 Loaded ${providers.length} AI providers (1 Lovable + ${geminiKeys.filter(k => k.key).length} Gemini + ${huggingfaceKeys.filter(k => k.key).length} HuggingFace)`);
+  
   return providers;
 }
 
@@ -736,11 +726,14 @@ serve(async (req) => {
       dbContext += locationContext;
     }
 
-    const providers = getAIProviders();
+    const providers = getVisionCapableProviders();
     if (providers.length === 0) {
-      const errorMsg = language === "fr" ? "Aucun fournisseur IA configuré" : "No AI provider configured";
+      console.error("❌ No vision-capable AI providers configured");
+      const errorMsg = language === "fr" 
+        ? "Aucun fournisseur IA avec capacité vision configuré. Veuillez configurer au moins une clé Lovable AI ou Gemini."
+        : "No vision-capable AI provider configured. Please configure at least one Lovable AI or Gemini key.";
       return new Response(
-        JSON.stringify({ error: errorMsg }),
+        JSON.stringify({ error: errorMsg, error_type: "no_providers" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
