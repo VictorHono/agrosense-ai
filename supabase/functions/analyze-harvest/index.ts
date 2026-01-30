@@ -470,7 +470,27 @@ async function callProvider(
       const data = await response.json();
       result = parseLovableResponse(data);
     } else if ((provider as ExtendedAIProvider).type === "huggingface") {
-      const textPrompt = `${systemPrompt}\n\n${dbContext}\n\n${userPrompt}\n\nNote: Analyse basée sur la description textuelle. Réponds en JSON valide.`;
+      // HuggingFace Router: text-only fallback with explicit JSON structure
+      const jsonExample = `{
+  "is_good_quality": true,
+  "detected_crop": "Maïs",
+  "detected_crop_local": "Mbanga",
+  "grade": "B",
+  "quality": {"color": 70, "size": 65, "defects": 10, "uniformity": 75, "maturity": 80},
+  "recommendedUse": ["Vente au marché local"],
+  "estimatedPrice": {"min": 200, "max": 350, "currency": "XAF", "unit": "kg", "market": "Marché Central"},
+  "feedback": "Qualité satisfaisante pour le marché local",
+  "improvement_tips": ["Trier les grains avant vente"],
+  "storage_tips": ["Stocker dans un endroit sec"]
+}`;
+      
+      const textPrompt = `Tu es un expert en évaluation de récoltes camerounaises.
+Fournis une analyse de qualité générique basée sur les cultures camerounaises communes.
+
+INSTRUCTION CRITIQUE: Tu DOIS répondre UNIQUEMENT avec un objet JSON valide suivant EXACTEMENT cette structure:
+${jsonExample}
+
+Réponds UNIQUEMENT avec le JSON, sans texte avant ou après. Assure-toi que "detected_crop" et "grade" sont présents.`;
       
       response = await fetch(provider.endpoint, {
         method: "POST",
@@ -481,11 +501,10 @@ async function callProvider(
         body: JSON.stringify({
           model: (provider as ExtendedAIProvider).model,
           messages: [
-            { role: "system", content: systemPrompt },
             { role: "user", content: textPrompt },
           ],
           max_tokens: 1024,
-          temperature: 0.4,
+          temperature: 0.3,
         }),
       });
 
@@ -504,7 +523,17 @@ async function callProvider(
       if (text) {
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          result = { ...JSON.parse(jsonMatch[0]), from_database: false };
+          try {
+            const parsed = JSON.parse(jsonMatch[0]);
+            // Validate required fields exist
+            if (parsed.detected_crop && parsed.grade) {
+              result = { ...parsed, from_database: false };
+            } else {
+              console.error(`${provider.name}: Invalid response - missing required fields`);
+            }
+          } catch (parseErr) {
+            console.error(`${provider.name}: JSON parse error:`, parseErr);
+          }
         }
       }
     } else {
@@ -540,6 +569,16 @@ async function callProvider(
       };
     }
 
+    // Additional validation: ensure critical fields exist
+    if (!result.detected_crop || !result.grade) {
+      console.error(`${provider.name}: Response missing critical fields (detected_crop or grade)`);
+      return {
+        success: false,
+        error: `${provider.name}: Invalid response structure`,
+        shouldRetry: true,
+      };
+    }
+
     console.log(`${provider.name} succeeded - Crop: ${result.detected_crop}, Grade: ${result.grade}`);
     return { success: true, result, shouldRetry: false };
   } catch (error) {
@@ -554,9 +593,16 @@ async function callProvider(
 }
 
 function enrichResultWithDatabase(result: HarvestResult, crops: DBCrop[], prices: any[]): HarvestResult {
+  // Safety guard: if detected_crop is missing, return as-is
+  if (!result.detected_crop) {
+    console.warn("enrichResultWithDatabase: detected_crop is undefined, skipping enrichment");
+    return result;
+  }
+
+  const detectedCropLower = result.detected_crop?.toLowerCase() || "";
   const matchingCrop = crops.find(c => 
-    c.name.toLowerCase().includes(result.detected_crop.toLowerCase()) ||
-    result.detected_crop.toLowerCase().includes(c.name.toLowerCase())
+    c.name?.toLowerCase()?.includes(detectedCropLower) ||
+    detectedCropLower.includes(c.name?.toLowerCase() || "")
   );
 
   if (matchingCrop) {

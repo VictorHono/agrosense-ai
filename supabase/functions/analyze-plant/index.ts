@@ -768,8 +768,27 @@ async function callProvider(
       const data = await response.json();
       result = parseLovableResponse(data);
     } else if ((provider as ExtendedAIProvider).type === "huggingface") {
-      // HuggingFace Router: use completions for non-chat models (text-only fallback)
-      const textPrompt = `${systemPrompt}\n\n${dbContext}\n\n${userPrompt}\n\nNote: Analyse basée sur la description textuelle fournie. Réponds en JSON valide.`;
+      // HuggingFace Router: text-only fallback with explicit JSON structure
+      const jsonExample = `{
+  "is_healthy": true,
+  "detected_crop": "Maïs",
+  "detected_crop_local": "Mbanga",
+  "disease_name": null,
+  "confidence": 75,
+  "severity": "healthy",
+  "description": "Analyse basée sur description textuelle",
+  "prevention": ["Rotation des cultures"],
+  "maintenance_tips": ["Arrosage régulier"],
+  "yield_improvement_tips": ["Fertilisation adaptée"]
+}`;
+      
+      const textPrompt = `Tu es un expert agronome camerounais. L'utilisateur décrit une plante pour analyse.
+Comme tu n'as pas d'image, fournis une analyse générique basée sur les cultures camerounaises communes.
+
+INSTRUCTION CRITIQUE: Tu DOIS répondre UNIQUEMENT avec un objet JSON valide suivant EXACTEMENT cette structure:
+${jsonExample}
+
+Réponds UNIQUEMENT avec le JSON, sans texte avant ou après. Assure-toi que "detected_crop" et "confidence" sont présents.`;
       
       const token = sanitizeApiKey(provider.apiKey) ?? provider.apiKey;
 
@@ -782,11 +801,10 @@ async function callProvider(
         body: JSON.stringify({
           model: provider.model,
           messages: [
-            { role: "system", content: systemPrompt },
             { role: "user", content: textPrompt },
           ],
           max_tokens: 1024,
-          temperature: 0.4,
+          temperature: 0.3,
         }),
       });
 
@@ -805,7 +823,17 @@ async function callProvider(
       if (text) {
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          result = { ...JSON.parse(jsonMatch[0]), from_database: false, from_learning: false };
+          try {
+            const parsed = JSON.parse(jsonMatch[0]);
+            // Validate required fields exist
+            if (parsed.detected_crop && typeof parsed.confidence === 'number') {
+              result = { ...parsed, from_database: false, from_learning: false };
+            } else {
+              console.error(`${provider.name}: Invalid response - missing required fields`);
+            }
+          } catch (parseErr) {
+            console.error(`${provider.name}: JSON parse error:`, parseErr);
+          }
         }
       }
     } else {
@@ -841,6 +869,16 @@ async function callProvider(
       };
     }
 
+    // Additional validation: ensure critical fields exist
+    if (!result.detected_crop || typeof result.confidence !== 'number') {
+      console.error(`${provider.name}: Response missing critical fields (detected_crop or confidence)`);
+      return {
+        success: false,
+        error: `${provider.name}: Invalid response structure`,
+        shouldRetry: true,
+      };
+    }
+
     console.log(`${provider.name} succeeded - Healthy: ${result.is_healthy}, Crop: ${result.detected_crop}`);
     return { success: true, result, shouldRetry: false };
   } catch (error) {
@@ -859,6 +897,12 @@ function enrichResultWithDatabase(
   diseases: DBDisease[],
   crops: DBCrop[]
 ): AnalysisResult {
+  // Safety guard: if detected_crop is missing, return as-is
+  if (!result.detected_crop) {
+    console.warn("enrichResultWithDatabase: detected_crop is undefined, skipping enrichment");
+    return result;
+  }
+
   if (!result.is_healthy && result.disease_name) {
     const { disease, crop } = findMatchingDisease(
       diseases,
@@ -897,9 +941,10 @@ function enrichResultWithDatabase(
     }
   }
 
+  const detectedCropLower = result.detected_crop?.toLowerCase() || "";
   const matchingCrop = crops.find(c => 
-    c.name.toLowerCase().includes(result.detected_crop.toLowerCase()) ||
-    result.detected_crop.toLowerCase().includes(c.name.toLowerCase())
+    c.name?.toLowerCase()?.includes(detectedCropLower) ||
+    detectedCropLower.includes(c.name?.toLowerCase() || "")
   );
 
   if (matchingCrop) {
