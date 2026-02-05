@@ -94,17 +94,56 @@ const PROVIDER_TYPES = [
 
 const DEFAULT_ENDPOINTS: Record<string, string> = {
   lovable: 'https://ai.gateway.lovable.dev/v1/chat/completions',
-  gemini: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
+  gemini: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
   huggingface: 'https://router.huggingface.co/v1/chat/completions',
   openai: 'https://api.openai.com/v1/chat/completions',
   anthropic: 'https://api.anthropic.com/v1/messages',
 };
 
+// Modèles disponibles par provider - l'utilisateur peut aussi saisir un modèle personnalisé
+const AVAILABLE_MODELS: Record<string, { value: string; label: string; vision: boolean }[]> = {
+  lovable: [
+    { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash (Recommandé)', vision: true },
+    { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro', vision: true },
+    { value: 'google/gemini-3-flash-preview', label: 'Gemini 3 Flash Preview', vision: true },
+    { value: 'google/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview', vision: true },
+    { value: 'google/gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite', vision: true },
+    { value: 'openai/gpt-5', label: 'GPT-5', vision: true },
+    { value: 'openai/gpt-5-mini', label: 'GPT-5 Mini', vision: true },
+    { value: 'openai/gpt-5-nano', label: 'GPT-5 Nano', vision: true },
+  ],
+  gemini: [
+    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Gratuit)', vision: true },
+    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (Gratuit limité)', vision: true },
+    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', vision: true },
+    { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite', vision: true },
+    { value: 'gemini-pro-vision', label: 'Gemini Pro Vision', vision: true },
+  ],
+  huggingface: [
+    { value: 'meta-llama/Llama-3.1-8B-Instruct', label: 'Llama 3.1 8B', vision: false },
+    { value: 'meta-llama/Llama-3.2-11B-Vision-Instruct', label: 'Llama 3.2 11B Vision', vision: true },
+    { value: 'mistralai/Mistral-7B-Instruct-v0.3', label: 'Mistral 7B', vision: false },
+    { value: 'Qwen/Qwen2-VL-7B-Instruct', label: 'Qwen2 VL 7B (Vision)', vision: true },
+  ],
+  openai: [
+    { value: 'gpt-4o', label: 'GPT-4o', vision: true },
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini', vision: true },
+    { value: 'gpt-4-turbo', label: 'GPT-4 Turbo', vision: true },
+    { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo', vision: false },
+  ],
+  anthropic: [
+    { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet', vision: true },
+    { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus', vision: true },
+    { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku', vision: true },
+  ],
+  custom: [],
+};
+
 const DEFAULT_MODELS: Record<string, string> = {
-  lovable: 'google/gemini-2.5-pro',
-  gemini: 'gemini-2.0-flash',
+  lovable: 'google/gemini-2.5-flash',
+  gemini: 'gemini-1.5-flash',
   huggingface: 'meta-llama/Llama-3.1-8B-Instruct',
-  openai: 'gpt-4o',
+  openai: 'gpt-4o-mini',
   anthropic: 'claude-3-5-sonnet-20241022',
 };
 
@@ -130,6 +169,7 @@ export default function AdminAIPage() {
     is_active: true,
     is_vision_capable: true,
     priority_order: 100,
+    useCustomModel: false,
   });
 
   useEffect(() => {
@@ -216,12 +256,39 @@ export default function AdminAIPage() {
 
   const handleProviderTypeChange = (type: string) => {
     const provider = PROVIDER_TYPES.find(p => p.value === type);
+    const defaultModel = DEFAULT_MODELS[type] || '';
+    let endpoint = DEFAULT_ENDPOINTS[type] || '';
+    
+    // Pour Gemini, remplacer {model} par le modèle par défaut
+    if (type === 'gemini' && defaultModel) {
+      endpoint = endpoint.replace('{model}', defaultModel);
+    }
+    
     setFormData({
       ...formData,
       provider_type: type,
-      endpoint_url: DEFAULT_ENDPOINTS[type] || '',
-      model_name: DEFAULT_MODELS[type] || '',
+      endpoint_url: endpoint,
+      model_name: defaultModel,
       is_vision_capable: provider?.visionCapable || false,
+      useCustomModel: false,
+    });
+  };
+
+  const handleModelChange = (model: string) => {
+    const models = AVAILABLE_MODELS[formData.provider_type] || [];
+    const selectedModel = models.find(m => m.value === model);
+    
+    let endpoint = formData.endpoint_url;
+    // Pour Gemini, mettre à jour l'endpoint avec le nouveau modèle
+    if (formData.provider_type === 'gemini') {
+      endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+    }
+    
+    setFormData({
+      ...formData,
+      model_name: model,
+      endpoint_url: endpoint,
+      is_vision_capable: selectedModel?.vision ?? formData.is_vision_capable,
     });
   };
 
@@ -340,9 +407,12 @@ export default function AdminAIPage() {
       let statusCode = 0;
       let statusMessage = '';
 
+      // Utiliser le modèle configuré pour chaque clé
+      const modelName = key.model_name || DEFAULT_MODELS[key.provider_type] || 'gemini-1.5-flash';
+
       if (key.provider_type === 'gemini') {
         const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -352,7 +422,7 @@ export default function AdminAIPage() {
           }
         );
         statusCode = response.status;
-        statusMessage = response.ok ? 'Opérationnel' : await response.text();
+        statusMessage = response.ok ? `Opérationnel (${modelName})` : await response.text();
       } else if (key.provider_type === 'lovable') {
         const response = await fetch(key.endpoint_url || DEFAULT_ENDPOINTS.lovable, {
           method: 'POST',
@@ -361,13 +431,13 @@ export default function AdminAIPage() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: key.model_name || 'google/gemini-2.5-flash',
+            model: modelName,
             messages: [{ role: 'user', content: 'test' }],
             max_tokens: 10,
           }),
         });
         statusCode = response.status;
-        statusMessage = response.ok ? 'Opérationnel' : await response.text();
+        statusMessage = response.ok ? `Opérationnel (${modelName})` : await response.text();
       } else if (key.provider_type === 'huggingface') {
         const response = await fetch(key.endpoint_url || DEFAULT_ENDPOINTS.huggingface, {
           method: 'POST',
@@ -376,13 +446,44 @@ export default function AdminAIPage() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: key.model_name || DEFAULT_MODELS.huggingface,
+            model: modelName,
             messages: [{ role: 'user', content: 'test' }],
             max_tokens: 10,
           }),
         });
         statusCode = response.status;
-        statusMessage = response.ok ? 'Opérationnel' : await response.text();
+        statusMessage = response.ok ? `Opérationnel (${modelName})` : await response.text();
+      } else if (key.provider_type === 'openai') {
+        const response = await fetch(key.endpoint_url || DEFAULT_ENDPOINTS.openai, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: modelName,
+            messages: [{ role: 'user', content: 'test' }],
+            max_tokens: 10,
+          }),
+        });
+        statusCode = response.status;
+        statusMessage = response.ok ? `Opérationnel (${modelName})` : await response.text();
+      } else if (key.provider_type === 'anthropic') {
+        const response = await fetch(key.endpoint_url || DEFAULT_ENDPOINTS.anthropic, {
+          method: 'POST',
+          headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: modelName,
+            messages: [{ role: 'user', content: 'test' }],
+            max_tokens: 10,
+          }),
+        });
+        statusCode = response.status;
+        statusMessage = response.ok ? `Opérationnel (${modelName})` : await response.text();
       } else {
         statusCode = 0;
         statusMessage = 'Test non implémenté pour ce type de provider';
@@ -433,12 +534,16 @@ export default function AdminAIPage() {
       is_active: true,
       is_vision_capable: true,
       priority_order: 100,
+      useCustomModel: false,
     });
     setSelectedKey(null);
   };
 
   const openEditDialog = (key: AIApiKey) => {
     setSelectedKey(key);
+    const models = AVAILABLE_MODELS[key.provider_type] || [];
+    const isCustomModel = key.model_name ? !models.some(m => m.value === key.model_name) : false;
+    
     setFormData({
       provider_name: key.provider_name,
       provider_type: key.provider_type,
@@ -449,6 +554,7 @@ export default function AdminAIPage() {
       is_active: key.is_active,
       is_vision_capable: key.is_vision_capable,
       priority_order: key.priority_order,
+      useCustomModel: isCustomModel,
     });
     setShowEditDialog(true);
   };
@@ -612,7 +718,7 @@ export default function AdminAIPage() {
                     <TableRow>
                       <TableHead className="w-12">#</TableHead>
                       <TableHead>Nom</TableHead>
-                      <TableHead>Provider</TableHead>
+                      <TableHead>Provider / Modèle</TableHead>
                       <TableHead>Clé API</TableHead>
                       <TableHead>Vision</TableHead>
                       <TableHead>Statut</TableHead>
@@ -626,9 +732,16 @@ export default function AdminAIPage() {
                         <TableCell className="font-mono text-xs">{key.priority_order}</TableCell>
                         <TableCell className="font-medium">{key.display_name}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="capitalize">
-                            {key.provider_type}
-                          </Badge>
+                          <div className="flex flex-col gap-1">
+                            <Badge variant="outline" className="capitalize w-fit">
+                              {key.provider_type}
+                            </Badge>
+                            {key.model_name && (
+                              <code className="text-xs text-muted-foreground font-mono truncate max-w-[150px]" title={key.model_name}>
+                                {key.model_name}
+                              </code>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
@@ -894,6 +1007,46 @@ export default function AdminAIPage() {
               />
             </div>
 
+            {/* Model Selection */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Modèle IA</Label>
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground">Personnalisé</Label>
+                  <Switch
+                    checked={formData.useCustomModel}
+                    onCheckedChange={(checked) => setFormData({ ...formData, useCustomModel: checked, model_name: checked ? formData.model_name : (DEFAULT_MODELS[formData.provider_type] || '') })}
+                  />
+                </div>
+              </div>
+              
+              {formData.useCustomModel || (AVAILABLE_MODELS[formData.provider_type]?.length === 0) ? (
+                <Input
+                  placeholder="ex: gemini-1.5-flash, gpt-4o-mini..."
+                  value={formData.model_name}
+                  onChange={(e) => setFormData({ ...formData, model_name: e.target.value })}
+                />
+              ) : (
+                <Select value={formData.model_name} onValueChange={handleModelChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Sélectionner un modèle" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {AVAILABLE_MODELS[formData.provider_type]?.map(model => (
+                      <SelectItem key={model.value} value={model.value}>
+                        {model.label} {model.vision && '🖼️'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              <p className="text-xs text-muted-foreground">
+                {formData.useCustomModel 
+                  ? "Entrez le nom exact du modèle (ex: gemini-1.5-flash pour la version gratuite)" 
+                  : "Choisissez un modèle ou activez le mode personnalisé"}
+              </p>
+            </div>
+
             <div className="space-y-2">
               <Label>Ordre de priorité</Label>
               <Input
@@ -979,6 +1132,46 @@ export default function AdminAIPage() {
                 value={formData.api_key}
                 onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
               />
+            </div>
+
+            {/* Model Selection */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Modèle IA</Label>
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground">Personnalisé</Label>
+                  <Switch
+                    checked={formData.useCustomModel}
+                    onCheckedChange={(checked) => setFormData({ ...formData, useCustomModel: checked, model_name: checked ? formData.model_name : (DEFAULT_MODELS[formData.provider_type] || '') })}
+                  />
+                </div>
+              </div>
+              
+              {formData.useCustomModel || (AVAILABLE_MODELS[formData.provider_type]?.length === 0) ? (
+                <Input
+                  placeholder="ex: gemini-1.5-flash, gpt-4o-mini..."
+                  value={formData.model_name}
+                  onChange={(e) => setFormData({ ...formData, model_name: e.target.value })}
+                />
+              ) : (
+                <Select value={formData.model_name} onValueChange={handleModelChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Sélectionner un modèle" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {AVAILABLE_MODELS[formData.provider_type]?.map(model => (
+                      <SelectItem key={model.value} value={model.value}>
+                        {model.label} {model.vision && '🖼️'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              <p className="text-xs text-muted-foreground">
+                {formData.useCustomModel 
+                  ? "Entrez le nom exact du modèle" 
+                  : "Choisissez un modèle ou activez le mode personnalisé"}
+              </p>
             </div>
 
             <div className="space-y-2">
