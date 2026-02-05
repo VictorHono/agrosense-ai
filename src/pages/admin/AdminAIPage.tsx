@@ -101,7 +101,8 @@ const DEFAULT_ENDPOINTS: Record<string, string> = {
 };
 
 // Modèles disponibles par provider - l'utilisateur peut aussi saisir un modèle personnalisé
-const AVAILABLE_MODELS: Record<string, { value: string; label: string; vision: boolean }[]> = {
+// ⚠️ IMPORTANT: Pour Gemini gratuit, utiliser UNIQUEMENT gemini-1.5-flash ou gemini-1.5-pro
+const AVAILABLE_MODELS: Record<string, { value: string; label: string; vision: boolean; free?: boolean }[]> = {
   lovable: [
     { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash (Recommandé)', vision: true },
     { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro', vision: true },
@@ -113,11 +114,12 @@ const AVAILABLE_MODELS: Record<string, { value: string; label: string; vision: b
     { value: 'openai/gpt-5-nano', label: 'GPT-5 Nano', vision: true },
   ],
   gemini: [
-    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Gratuit)', vision: true },
-    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (Gratuit limité)', vision: true },
-    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', vision: true },
-    { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite', vision: true },
-    { value: 'gemini-pro-vision', label: 'Gemini Pro Vision', vision: true },
+    { value: 'gemini-1.5-flash', label: '✅ Gemini 1.5 Flash (Gratuit)', vision: true, free: true },
+    { value: 'gemini-1.5-flash-8b', label: '✅ Gemini 1.5 Flash 8B (Gratuit)', vision: true, free: true },
+    { value: 'gemini-1.5-pro', label: '✅ Gemini 1.5 Pro (Gratuit limité)', vision: true, free: true },
+    { value: 'gemini-2.0-flash', label: '⚠️ Gemini 2.0 Flash (Payant)', vision: true, free: false },
+    { value: 'gemini-2.0-flash-lite', label: '⚠️ Gemini 2.0 Flash Lite (Payant)', vision: true, free: false },
+    { value: 'gemini-pro-vision', label: '⚠️ Gemini Pro Vision (Ancien)', vision: true, free: false },
   ],
   huggingface: [
     { value: 'meta-llama/Llama-3.1-8B-Instruct', label: 'Llama 3.1 8B', vision: false },
@@ -139,9 +141,10 @@ const AVAILABLE_MODELS: Record<string, { value: string; label: string; vision: b
   custom: [],
 };
 
+// Modèles par défaut - UTILISER DES MODÈLES GRATUITS POUR GEMINI
 const DEFAULT_MODELS: Record<string, string> = {
   lovable: 'google/gemini-2.5-flash',
-  gemini: 'gemini-1.5-flash',
+  gemini: 'gemini-1.5-flash', // ✅ Modèle gratuit par défaut
   huggingface: 'meta-llama/Llama-3.1-8B-Instruct',
   openai: 'gpt-4o-mini',
   anthropic: 'claude-3-5-sonnet-20241022',
@@ -1040,6 +1043,22 @@ export default function AdminAIPage() {
                   </SelectContent>
                 </Select>
               )}
+              
+              {/* Avertissement pour Gemini gratuit */}
+              {formData.provider_type === 'gemini' && (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                  <p className="text-xs text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    Modèles gratuits Gemini
+                  </p>
+                  <p className="text-xs text-amber-600/80 dark:text-amber-400/80 mt-1">
+                    Pour utiliser l'API gratuite de Google, sélectionnez uniquement les modèles marqués ✅ :
+                    <strong> gemini-1.5-flash</strong>, <strong>gemini-1.5-flash-8b</strong>, ou <strong>gemini-1.5-pro</strong>.
+                    Les modèles 2.0+ nécessitent un compte payant.
+                  </p>
+                </div>
+              )}
+              
               <p className="text-xs text-muted-foreground">
                 {formData.useCustomModel 
                   ? "Entrez le nom exact du modèle (ex: gemini-1.5-flash pour la version gratuite)" 
@@ -1167,6 +1186,21 @@ export default function AdminAIPage() {
                   </SelectContent>
                 </Select>
               )}
+              
+              {/* Avertissement pour Gemini gratuit */}
+              {formData.provider_type === 'gemini' && (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                  <p className="text-xs text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    Modèles gratuits Gemini
+                  </p>
+                  <p className="text-xs text-amber-600/80 dark:text-amber-400/80 mt-1">
+                    Pour utiliser l'API gratuite, sélectionnez uniquement : 
+                    <strong> gemini-1.5-flash</strong>, <strong>gemini-1.5-flash-8b</strong>, ou <strong>gemini-1.5-pro</strong>.
+                  </p>
+                </div>
+              )}
+              
               <p className="text-xs text-muted-foreground">
                 {formData.useCustomModel 
                   ? "Entrez le nom exact du modèle" 
