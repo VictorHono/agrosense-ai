@@ -128,14 +128,120 @@ function sanitizeApiKey(key: string | null | undefined): string | null {
 // HuggingFace Router - use a chat-compatible model (Mistral-7B-Instruct is NOT a chat model on HF Router)
 const HF_FALLBACK_MODEL = "meta-llama/Llama-3.1-8B-Instruct";
 
-function getVisionCapableProviders(): ExtendedAIProvider[] {
+// Rate limiting state - tracks when each provider was last rate limited
+const rateLimitState: Record<string, { until: number; backoffMs: number }> = {};
+
+// Minimum delay between requests to same provider (ms)
+const MIN_REQUEST_DELAY = 200;
+let lastRequestTime = 0;
+
+// Add delay between requests to avoid rate limiting
+async function rateLimitDelay(): Promise<void> {
+  const now = Date.now();
+  const elapsed = now - lastRequestTime;
+  if (elapsed < MIN_REQUEST_DELAY) {
+    await new Promise(resolve => setTimeout(resolve, MIN_REQUEST_DELAY - elapsed));
+  }
+  lastRequestTime = Date.now();
+}
+
+// Check if provider is currently rate limited
+function isRateLimited(providerName: string): boolean {
+  const state = rateLimitState[providerName];
+  if (!state) return false;
+  return Date.now() < state.until;
+}
+
+// Mark provider as rate limited with exponential backoff
+function markRateLimited(providerName: string, retryAfterMs: number = 15000): void {
+  const current = rateLimitState[providerName];
+  const backoff = current ? Math.min(current.backoffMs * 2, 120000) : retryAfterMs;
+  rateLimitState[providerName] = {
+    until: Date.now() + backoff,
+    backoffMs: backoff,
+  };
+  console.log(`⏳ ${providerName} rate limited for ${backoff / 1000}s`);
+}
+
+// Reset rate limit on successful request
+function clearRateLimit(providerName: string): void {
+  delete rateLimitState[providerName];
+}
+
+// Load providers from database with their configured models
+async function loadDatabaseProviders(supabase: any): Promise<ExtendedAIProvider[]> {
+  try {
+    const { data: dbKeys, error } = await supabase
+      .from("ai_api_keys")
+      .select("*")
+      .eq("is_active", true)
+      .eq("is_vision_capable", true)
+      .order("priority_order", { ascending: true });
+
+    if (error || !dbKeys?.length) {
+      console.log("📊 No database API keys found, using environment variables");
+      return [];
+    }
+
+    const providers: ExtendedAIProvider[] = [];
+    
+    for (const key of dbKeys) {
+      const apiKey = atob(key.api_key_encrypted); // Decode base64
+      const sanitized = sanitizeApiKey(apiKey);
+      if (!sanitized) continue;
+
+      // Skip rate-limited providers
+      if (isRateLimited(key.display_name)) {
+        console.log(`⏭️ Skipping ${key.display_name} - rate limited`);
+        continue;
+      }
+
+      const model = key.model_name || "gemini-2.0-flash-lite";
+
+      if (key.provider_type === "lovable") {
+        providers.push({
+          name: key.display_name,
+          endpoint: key.endpoint_url || "https://ai.gateway.lovable.dev/v1/chat/completions",
+          apiKey: sanitized,
+          model: model,
+          isLovable: true,
+          type: "lovable",
+        });
+      } else if (key.provider_type === "gemini") {
+        providers.push({
+          name: key.display_name,
+          endpoint: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${sanitized}`,
+          apiKey: sanitized,
+          model: model,
+          isLovable: false,
+          type: "gemini",
+        });
+      }
+      // Note: HuggingFace excluded - not vision capable
+    }
+
+    console.log(`📊 Loaded ${providers.length} vision-capable providers from database`);
+    return providers;
+  } catch (err) {
+    console.error("Error loading database providers:", err);
+    return [];
+  }
+}
+
+async function getVisionCapableProviders(supabase?: any): Promise<ExtendedAIProvider[]> {
   // IMPORTANT: For image analysis, we only use vision-capable providers
   // HuggingFace models cannot process images, so they are excluded from plant analysis
   const providers: ExtendedAIProvider[] = [];
 
-  // 1. Lovable AI Gateway (primary - vision capable with Gemini Pro)
+  // 1. Try loading from database first (uses configured models)
+  if (supabase) {
+    const dbProviders = await loadDatabaseProviders(supabase);
+    providers.push(...dbProviders);
+  }
+
+  // 2. Lovable AI Gateway (primary - vision capable with Gemini Pro)
   const lovableKey = sanitizeApiKey(Deno.env.get("LOVABLE_API_KEY"));
-  if (lovableKey) {
+  if (lovableKey && !providers.some(p => p.name === "Lovable AI Gateway")) {
     providers.push({
       name: "Lovable AI Gateway",
       endpoint: "https://ai.gateway.lovable.dev/v1/chat/completions",
@@ -146,7 +252,7 @@ function getVisionCapableProviders(): ExtendedAIProvider[] {
     });
   }
 
-  // 2. Gemini API keys (15 keys - all are vision capable)
+  // 3. Gemini API keys from environment (fallback - uses gemini-1.5-flash for free tier)
   const geminiKeys = [
     { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_1")), name: "Gemini API 1" },
     { key: sanitizeApiKey(Deno.env.get("GEMINI_API_KEY_2")), name: "Gemini API 2" },
@@ -166,12 +272,13 @@ function getVisionCapableProviders(): ExtendedAIProvider[] {
   ];
 
   for (const { key, name } of geminiKeys) {
-    if (key) {
+    // Skip if already loaded from database or rate limited
+    if (key && !providers.some(p => p.name === name) && !isRateLimited(name)) {
       providers.push({
         name,
-        endpoint: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
+        endpoint: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
         apiKey: key,
-        model: "gemini-2.0-flash",
+        model: "gemini-1.5-flash",
         isLovable: false,
         type: "gemini",
       });
@@ -182,7 +289,7 @@ function getVisionCapableProviders(): ExtendedAIProvider[] {
   // They are text-only models and will return incorrect/generic results for plant analysis
 
   const activeCount = providers.length;
-  console.log(`🔌 Loaded ${activeCount} VISION-CAPABLE AI providers (1 Lovable + ${geminiKeys.filter(k => k.key).length} Gemini)`);
+  console.log(`🔌 Loaded ${activeCount} VISION-CAPABLE AI providers`);
   console.log(`⚠️ HuggingFace providers excluded - they cannot analyze images`);
   
   if (activeCount === 0) {
@@ -1055,7 +1162,7 @@ serve(async (req) => {
       dbContext += locationContext;
     }
 
-    const providers = getVisionCapableProviders();
+    const providers = await getVisionCapableProviders(supabase);
     if (providers.length === 0) {
       console.error("No vision-capable AI providers configured");
       return new Response(
@@ -1159,8 +1266,24 @@ Réponds en ${language === "fr" ? "français" : "anglais"}.`;
 
     let lastError = "";
     let usedProvider = "";
+    let attemptCount = 0;
 
     for (const provider of providers) {
+      attemptCount++;
+      
+      // Add delay between requests to avoid rate limiting
+      if (attemptCount > 1) {
+        await rateLimitDelay();
+      }
+      
+      // Skip if provider got rate limited during this request
+      if (isRateLimited(provider.name)) {
+        console.log(`⏭️ Skipping ${provider.name} - currently rate limited`);
+        continue;
+      }
+      
+      console.log(`🔄 Trying provider ${attemptCount}/${providers.length}: ${provider.name}`);
+      
       const { success, result, error, shouldRetry } = await callProvider(
         provider,
         systemPrompt,
@@ -1168,6 +1291,13 @@ Réponds en ${language === "fr" ? "français" : "anglais"}.`;
         image,
         dbContext
       );
+      
+      // Track rate limiting
+      if (error?.includes("429")) {
+        markRateLimited(provider.name);
+      } else if (success) {
+        clearRateLimit(provider.name);
+      }
 
       if (success && result) {
         usedProvider = provider.name;
