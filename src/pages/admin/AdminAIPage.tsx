@@ -101,7 +101,7 @@ const DEFAULT_ENDPOINTS: Record<string, string> = {
 };
 
 // Modèles disponibles par provider - l'utilisateur peut aussi saisir un modèle personnalisé
-// ⚠️ IMPORTANT: Pour Gemini gratuit, utiliser UNIQUEMENT gemini-1.5-flash ou gemini-1.5-pro
+// Modèles disponibles par provider - tous les modèles Gemini 2.0 sont gratuits avec rate limits
 const AVAILABLE_MODELS: Record<string, { value: string; label: string; vision: boolean; free?: boolean }[]> = {
   lovable: [
     { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash (Recommandé)', vision: true },
@@ -114,12 +114,12 @@ const AVAILABLE_MODELS: Record<string, { value: string; label: string; vision: b
     { value: 'openai/gpt-5-nano', label: 'GPT-5 Nano', vision: true },
   ],
   gemini: [
+    { value: 'gemini-2.0-flash-lite', label: '✅ Gemini 2.0 Flash Lite (Gratuit, rapide)', vision: true, free: true },
+    { value: 'gemini-2.0-flash', label: '✅ Gemini 2.0 Flash (Gratuit)', vision: true, free: true },
     { value: 'gemini-1.5-flash', label: '✅ Gemini 1.5 Flash (Gratuit)', vision: true, free: true },
     { value: 'gemini-1.5-flash-8b', label: '✅ Gemini 1.5 Flash 8B (Gratuit)', vision: true, free: true },
-    { value: 'gemini-1.5-pro', label: '✅ Gemini 1.5 Pro (Gratuit limité)', vision: true, free: true },
-    { value: 'gemini-2.0-flash', label: '⚠️ Gemini 2.0 Flash (Payant)', vision: true, free: false },
-    { value: 'gemini-2.0-flash-lite', label: '⚠️ Gemini 2.0 Flash Lite (Payant)', vision: true, free: false },
-    { value: 'gemini-pro-vision', label: '⚠️ Gemini Pro Vision (Ancien)', vision: true, free: false },
+    { value: 'gemini-1.5-pro', label: '✅ Gemini 1.5 Pro (Gratuit)', vision: true, free: true },
+    { value: 'gemini-pro-vision', label: 'Gemini Pro Vision (Ancien)', vision: true, free: true },
   ],
   huggingface: [
     { value: 'meta-llama/Llama-3.1-8B-Instruct', label: 'Llama 3.1 8B', vision: false },
@@ -141,10 +141,10 @@ const AVAILABLE_MODELS: Record<string, { value: string; label: string; vision: b
   custom: [],
 };
 
-// Modèles par défaut - UTILISER DES MODÈLES GRATUITS POUR GEMINI
+// Modèles par défaut
 const DEFAULT_MODELS: Record<string, string> = {
   lovable: 'google/gemini-2.5-flash',
-  gemini: 'gemini-1.5-flash', // ✅ Modèle gratuit par défaut
+  gemini: 'gemini-2.0-flash-lite', // Modèle gratuit et rapide
   huggingface: 'meta-llama/Llama-3.1-8B-Instruct',
   openai: 'gpt-4o-mini',
   anthropic: 'claude-3-5-sonnet-20241022',
@@ -402,7 +402,7 @@ export default function AdminAIPage() {
     }
   };
 
-  const handleTestKey = async (key: AIApiKey) => {
+  const handleTestKey = async (key: AIApiKey, retryCount = 0) => {
     setTestingKey(key.id);
     
     try {
@@ -411,7 +411,7 @@ export default function AdminAIPage() {
       let statusMessage = '';
 
       // Utiliser le modèle configuré pour chaque clé
-      const modelName = key.model_name || DEFAULT_MODELS[key.provider_type] || 'gemini-1.5-flash';
+      const modelName = key.model_name || DEFAULT_MODELS[key.provider_type] || 'gemini-2.0-flash-lite';
 
       if (key.provider_type === 'gemini') {
         const response = await fetch(
@@ -425,7 +425,22 @@ export default function AdminAIPage() {
           }
         );
         statusCode = response.status;
-        statusMessage = response.ok ? `Opérationnel (${modelName})` : await response.text();
+        
+        if (response.ok) {
+          statusMessage = `✓ Opérationnel (${modelName})`;
+        } else {
+          const errorText = await response.text();
+          // Extraire un message d'erreur court
+          if (statusCode === 429) {
+            statusMessage = 'Rate limit - Attendez quelques secondes';
+          } else if (statusCode === 400) {
+            statusMessage = 'Requête invalide - Vérifiez le modèle';
+          } else if (statusCode === 401 || statusCode === 403) {
+            statusMessage = 'Clé API invalide';
+          } else {
+            statusMessage = errorText.substring(0, 200);
+          }
+        }
       } else if (key.provider_type === 'lovable') {
         const response = await fetch(key.endpoint_url || DEFAULT_ENDPOINTS.lovable, {
           method: 'POST',
@@ -440,7 +455,7 @@ export default function AdminAIPage() {
           }),
         });
         statusCode = response.status;
-        statusMessage = response.ok ? `Opérationnel (${modelName})` : await response.text();
+        statusMessage = response.ok ? `✓ Opérationnel (${modelName})` : await response.text();
       } else if (key.provider_type === 'huggingface') {
         const response = await fetch(key.endpoint_url || DEFAULT_ENDPOINTS.huggingface, {
           method: 'POST',
@@ -455,7 +470,7 @@ export default function AdminAIPage() {
           }),
         });
         statusCode = response.status;
-        statusMessage = response.ok ? `Opérationnel (${modelName})` : await response.text();
+        statusMessage = response.ok ? `✓ Opérationnel (${modelName})` : await response.text();
       } else if (key.provider_type === 'openai') {
         const response = await fetch(key.endpoint_url || DEFAULT_ENDPOINTS.openai, {
           method: 'POST',
@@ -470,7 +485,7 @@ export default function AdminAIPage() {
           }),
         });
         statusCode = response.status;
-        statusMessage = response.ok ? `Opérationnel (${modelName})` : await response.text();
+        statusMessage = response.ok ? `✓ Opérationnel (${modelName})` : await response.text();
       } else if (key.provider_type === 'anthropic') {
         const response = await fetch(key.endpoint_url || DEFAULT_ENDPOINTS.anthropic, {
           method: 'POST',
@@ -486,10 +501,17 @@ export default function AdminAIPage() {
           }),
         });
         statusCode = response.status;
-        statusMessage = response.ok ? `Opérationnel (${modelName})` : await response.text();
+        statusMessage = response.ok ? `✓ Opérationnel (${modelName})` : await response.text();
       } else {
         statusCode = 0;
         statusMessage = 'Test non implémenté pour ce type de provider';
+      }
+
+      // Si 429 et pas encore de retry, attendre et réessayer
+      if (statusCode === 429 && retryCount < 2) {
+        toast.info(`${key.display_name}: Rate limit, nouvelle tentative dans 5s...`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        return handleTestKey(key, retryCount + 1);
       }
 
       await supabase
@@ -508,6 +530,8 @@ export default function AdminAIPage() {
 
       if (statusCode === 200) {
         toast.success(`${key.display_name}: Test réussi ✓`);
+      } else if (statusCode === 429) {
+        toast.warning(`${key.display_name}: Rate limit temporaire (429) - La clé est valide mais surchargée`);
       } else {
         toast.error(`${key.display_name}: Erreur ${statusCode}`);
       }
@@ -1044,24 +1068,23 @@ export default function AdminAIPage() {
                 </Select>
               )}
               
-              {/* Avertissement pour Gemini gratuit */}
+              {/* Info pour Gemini */}
               {formData.provider_type === 'gemini' && (
-                <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
-                  <p className="text-xs text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5" />
-                    Modèles gratuits Gemini
+                <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                  <p className="text-xs text-primary font-medium flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5" />
+                    API Gemini gratuite
                   </p>
-                  <p className="text-xs text-amber-600/80 dark:text-amber-400/80 mt-1">
-                    Pour utiliser l'API gratuite de Google, sélectionnez uniquement les modèles marqués ✅ :
-                    <strong> gemini-1.5-flash</strong>, <strong>gemini-1.5-flash-8b</strong>, ou <strong>gemini-1.5-pro</strong>.
-                    Les modèles 2.0+ nécessitent un compte payant.
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Tous les modèles Gemini sont gratuits avec des limites de requêtes par minute.
+                    Si vous obtenez une erreur 429, attendez quelques secondes et réessayez.
                   </p>
                 </div>
               )}
               
               <p className="text-xs text-muted-foreground">
                 {formData.useCustomModel 
-                  ? "Entrez le nom exact du modèle (ex: gemini-1.5-flash pour la version gratuite)" 
+                  ? "Entrez le nom exact du modèle (ex: gemini-2.0-flash-lite)" 
                   : "Choisissez un modèle ou activez le mode personnalisé"}
               </p>
             </div>
@@ -1187,16 +1210,16 @@ export default function AdminAIPage() {
                 </Select>
               )}
               
-              {/* Avertissement pour Gemini gratuit */}
+              {/* Info pour Gemini */}
               {formData.provider_type === 'gemini' && (
-                <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
-                  <p className="text-xs text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5" />
-                    Modèles gratuits Gemini
+                <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                  <p className="text-xs text-primary font-medium flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5" />
+                    API Gemini gratuite
                   </p>
-                  <p className="text-xs text-amber-600/80 dark:text-amber-400/80 mt-1">
-                    Pour utiliser l'API gratuite, sélectionnez uniquement : 
-                    <strong> gemini-1.5-flash</strong>, <strong>gemini-1.5-flash-8b</strong>, ou <strong>gemini-1.5-pro</strong>.
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Tous les modèles Gemini sont gratuits avec des limites de requêtes par minute.
+                    Si vous obtenez une erreur 429, attendez quelques secondes et réessayez.
                   </p>
                 </div>
               )}
